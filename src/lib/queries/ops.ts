@@ -77,6 +77,12 @@ export function formatPlanned(date: Date | string, zone: string): string {
   return `${dt.toFormat("h:mm a")}, ${dt.toFormat("EEE d LLL")}`;
 }
 
+// "Thu 12 Nov at 9:00 AM"
+export function formatWhen(date: Date | string, zone: string): string {
+  const dt = toZoned(date, zone);
+  return `${dt.toFormat("EEE d LLL")} at ${dt.toFormat("h:mm a")}`;
+}
+
 function toZoned(date: Date | string, zone: string): DateTime {
   const instant = typeof date === "string" ? new Date(date) : date;
   return DateTime.fromJSDate(instant, { zone: zoneOrUtc(zone) }).setLocale("en");
@@ -109,6 +115,23 @@ export function describeStep(input: {
   return `${kind}, ${when}`;
 }
 
+// The compact form for queue rows: "3 days before due", "On the due date", "7 days after due".
+export function describeStepShort(input: {
+  hasStep: boolean;
+  offsetDays: number | null;
+  isFinalNotice: boolean | null;
+  isInstallment: boolean;
+}): string {
+  if (!input.hasStep || input.offsetDays === null) return "Step removed";
+  const anchor = input.isInstallment ? "installment due" : "due";
+  const days = Math.abs(input.offsetDays);
+  const when =
+    input.offsetDays === 0
+      ? `On the ${input.isInstallment ? "installment " : ""}due date`
+      : `${days} ${days === 1 ? "day" : "days"} ${input.offsetDays < 0 ? "before" : "after"} ${anchor}`;
+  return input.isFinalNotice ? `Final notice, ${when.charAt(0).toLowerCase()}${when.slice(1)}` : when;
+}
+
 // ---- Reminder details --------------------------------------------------------
 
 export interface ReminderDetail {
@@ -126,6 +149,8 @@ export interface ReminderDetail {
   currency: string;
   dueDate: string;
   stepLabel: string;
+  // "7 days after due", for compact rows.
+  stepShort: string;
   hasStep: boolean;
   // The editor starts from these template texts (the override, else the step).
   subject: string;
@@ -218,6 +243,12 @@ export async function loadReminderDetails(userId: string, messageIds: readonly s
           hasStep: row.step_id !== null,
           offsetDays: row.step_offset,
           tone: row.step_tone,
+          isFinalNotice: row.step_final,
+          isInstallment: row.installment_id !== null,
+        }),
+        stepShort: describeStepShort({
+          hasStep: row.step_id !== null,
+          offsetDays: row.step_offset,
           isFinalNotice: row.step_final,
           isInstallment: row.installment_id !== null,
         }),
@@ -340,12 +371,29 @@ async function loadBounceAddresses(
 
 // ---- Needs you ---------------------------------------------------------------
 
+export interface MoneyAmount {
+  amountMinor: number;
+  currency: string;
+}
+
 export interface NeedsYouRow extends Omit<NeedsYouItem, "plannedAt"> {
   plannedLabel: string | null;
   reminder: ReminderDetail | null;
   // For a bounce: the address the contact has now, and the address that bounced. The address
   // counts as fixed once the two differ. The engine keeps the hold when the address changes.
   bounce: { currentEmail: string; bouncedEmail: string | null } | null;
+  // Queue rows lead with the client, so the row's own line never repeats it.
+  clientName: string | null;
+  invoiceNumber: string | null;
+  // The short line beside the client: what the item is about, then a quieter detail.
+  line: { title: string; meta: string | null };
+  // The money this item holds up: the reminder's payable, the disputed invoice, or for a
+  // reply or bounce the client's outstanding balance. One entry per currency, never added up.
+  atStake: MoneyAmount[];
+  // For approvals: how many reminders on the same invoice are awaiting approval (this one included).
+  invoiceApprovals: number;
+  // For replies: how many reminders are held for the client.
+  heldCount: number;
 }
 
 export interface NeedsYouSection {
@@ -361,17 +409,92 @@ export interface NeedsYouView {
   sections: NeedsYouSection[];
 }
 
-// Display order: money-at-risk first (approvals, failures), then the things that stop
-// reminders (replies, bounces), then informational items.
+// Display order, by urgency (DESIGN_V2): things that broke come first (failed sends, sends
+// that may or may not have gone out, bounced addresses), then decisions that hold money up
+// (approvals, replies), then informational items.
 export const NEEDS_YOU_SECTIONS: { kind: NeedsYouKind; heading: string; explanation: string }[] = [
-  { kind: "approval", heading: "Awaiting your approval", explanation: "Nothing goes out until you approve these." },
-  { kind: "failed", heading: "Failed to send", explanation: "The email provider refused these before accepting them." },
-  { kind: "needs_check", heading: "Check whether these were delivered", explanation: "These may already have gone out. They are never sent again automatically." },
-  { kind: "reply", heading: "Clients who replied", explanation: "Reminders to these clients are on hold until you resume them." },
+  { kind: "failed", heading: "Failed to send", explanation: "The email provider refused these. Retry or cancel them." },
+  { kind: "needs_check", heading: "Check delivery", explanation: "These may already have gone out. They are never sent again automatically." },
   { kind: "bounce", heading: "Bounced addresses", explanation: "Nothing more goes to these addresses until you fix them and resume." },
-  { kind: "disputed", heading: "Disputed invoices", explanation: "Reminders stop while an invoice is disputed." },
-  { kind: "paid_while_disputed", heading: "Paid while disputed", explanation: "A payment arrived while these invoices were disputed or written off. Check the dispute is resolved, then mark it as reviewed." },
+  { kind: "approval", heading: "Awaiting your approval", explanation: "Nothing goes out until you approve it." },
+  { kind: "reply", heading: "Clients who replied", explanation: "Reminders to these clients are on hold until you resume them." },
+  { kind: "paid_while_disputed", heading: "Paid while disputed", explanation: "A payment arrived while these were disputed or written off. Check the dispute is resolved." },
+  { kind: "disputed", heading: "Disputed invoices", explanation: "Reminders stay stopped while an invoice is disputed." },
 ];
+
+interface RowContext {
+  clients: Map<string, { name: string; outstanding: MoneyAmount[]; held: number }>;
+  invoices: Map<string, { number: string; amount: MoneyAmount }>;
+}
+
+// Client names, outstanding balances and held counts, and invoice numbers and amounts, for the
+// rows that do not carry a reminder. Ids outside the user's account are simply absent.
+async function loadRowContext(userId: string, clientIds: readonly string[], invoiceIds: readonly string[]): Promise<RowContext> {
+  const cIds = [...new Set(clientIds)].filter(isUuid);
+  const iIds = [...new Set(invoiceIds)].filter(isUuid);
+  const out: RowContext = { clients: new Map(), invoices: new Map() };
+  if (cIds.length === 0 && iIds.length === 0) return out;
+  return withUser(userId, async (c) => {
+    if (cIds.length > 0) {
+      const names = await c.query<{ id: string; name: string; held: string }>(
+        `select cl.id, cl.name,
+                (select count(*) from scheduled_messages m join invoices i on i.id = m.invoice_id
+                  where m.user_id = cl.user_id and i.client_id = cl.id and m.status = 'held')::text as held
+           from clients cl where cl.user_id = $1 and cl.id = any($2::uuid[])`,
+        [userId, cIds],
+      );
+      for (const r of names.rows) out.clients.set(r.id, { name: r.name, outstanding: [], held: Number(r.held) });
+      const owed = await c.query<{ client_id: string; currency: string; amount: string }>(
+        `with payables as (
+           select i.client_id, i.currency, i.amount_minor as amount
+             from invoices i
+            where i.user_id = $1 and i.client_id = any($2::uuid[]) and i.status in ('open', 'paused', 'disputed')
+              and not exists (select 1 from payment_plan_installments p where p.invoice_id = i.id)
+           union all
+           select i.client_id, p.currency, p.amount_minor
+             from payment_plan_installments p join invoices i on i.id = p.invoice_id
+            where p.user_id = $1 and i.client_id = any($2::uuid[]) and p.status = 'open'
+              and i.status in ('open', 'payment_plan', 'paused', 'disputed')
+         )
+         select client_id, currency, sum(amount)::text as amount from payables group by client_id, currency order by currency`,
+        [userId, cIds],
+      );
+      for (const r of owed.rows) out.clients.get(r.client_id)?.outstanding.push({ amountMinor: Number(r.amount), currency: r.currency });
+    }
+    if (iIds.length > 0) {
+      const invoices = await c.query<{ id: string; invoice_number: string; amount_minor: string; currency: string }>(
+        "select id, invoice_number, amount_minor::text, currency from invoices where user_id = $1 and id = any($2::uuid[])",
+        [userId, iIds],
+      );
+      for (const r of invoices.rows) {
+        out.invoices.set(r.id, { number: r.invoice_number, amount: { amountMinor: Number(r.amount_minor), currency: r.currency } });
+      }
+    }
+    return out;
+  });
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+// The short row line. The client leads the row, so it is never repeated here.
+function rowLine(item: NeedsYouItem, reminder: ReminderDetail | null, invoiceNumber: string | null, held: number): NeedsYouRow["line"] {
+  const number = invoiceNumber ?? "Invoice";
+  switch (item.kind) {
+    case "approval":
+    case "failed":
+    case "needs_check":
+      return { title: number, meta: reminder?.stepShort ?? null };
+    case "bounce":
+      return { title: item.title.replace(/ bounced for .*$/, ""), meta: null };
+    case "reply":
+      return { title: held > 0 ? `${plural(held, "reminder", "reminders")} on hold` : "Replied", meta: null };
+    case "disputed":
+    case "paid_while_disputed":
+      return { title: number, meta: null };
+  }
+}
 
 export async function loadNeedsYou(userId: string): Promise<NeedsYouView> {
   const [settings, items] = await Promise.all([loadSettingsView(userId), listNeedsYou(userId)]);
@@ -380,20 +503,58 @@ export async function loadNeedsYou(userId: string): Promise<NeedsYouView> {
   const bounceContacts = items.flatMap((item) => (item.kind === "bounce" && item.contactId ? [item.contactId] : []));
   const bounces = await loadBounceAddresses(userId, bounceContacts);
 
+  const context = await loadRowContext(
+    userId,
+    items.flatMap((item) => (item.clientId ? [item.clientId] : [])),
+    items.flatMap((item) => (item.invoiceId && !item.messageId ? [item.invoiceId] : [])),
+  );
+  const approvalsPerInvoice = new Map<string, number>();
+  for (const item of items) {
+    if (item.kind === "approval" && item.invoiceId) {
+      approvalsPerInvoice.set(item.invoiceId, (approvalsPerInvoice.get(item.invoiceId) ?? 0) + 1);
+    }
+  }
+
   const rows: NeedsYouRow[] = items.map((item) => {
     const { plannedAt, ...rest } = item;
+    const reminder = item.messageId ? (details.get(item.messageId) ?? null) : null;
+    const client = item.clientId ? context.clients.get(item.clientId) : undefined;
+    const invoice = item.invoiceId ? context.invoices.get(item.invoiceId) : undefined;
+    const invoiceNumber = reminder?.invoiceNumber ?? invoice?.number ?? null;
+    const held = client?.held ?? 0;
+    let atStake: MoneyAmount[] = [];
+    if (reminder) atStake = [{ amountMinor: reminder.amountMinor, currency: reminder.currency }];
+    else if (invoice) atStake = [invoice.amount];
+    else if (client && (item.kind === "reply" || item.kind === "bounce")) atStake = client.outstanding;
     return {
       ...rest,
       plannedLabel: plannedAt ? formatPlanned(plannedAt, settings.timezone) : null,
-      reminder: item.messageId ? (details.get(item.messageId) ?? null) : null,
+      reminder,
       bounce: item.contactId && item.kind === "bounce" ? (bounces.get(item.contactId) ?? null) : null,
+      clientName: reminder?.clientName ?? client?.name ?? null,
+      invoiceNumber,
+      line: rowLine(item, reminder, invoiceNumber, held),
+      atStake,
+      invoiceApprovals: item.kind === "approval" && item.invoiceId ? (approvalsPerInvoice.get(item.invoiceId) ?? 1) : 0,
+      heldCount: held,
     };
   });
 
-  const sections = NEEDS_YOU_SECTIONS.map((section) => ({
-    ...section,
-    rows: rows.filter((row) => row.kind === section.kind),
-  })).filter((section) => section.rows.length > 0);
+  // Approvals for the same invoice sit together (in the order of each invoice's first one), so
+  // "Approve all N" covers a visible run of rows.
+  const firstSeen = new Map<string, number>();
+  rows.forEach((row, index) => {
+    if (row.kind === "approval" && row.invoiceId && !firstSeen.has(row.invoiceId)) firstSeen.set(row.invoiceId, index);
+  });
+  const groupOrder = (row: NeedsYouRow, index: number) => (row.invoiceId ? (firstSeen.get(row.invoiceId) ?? index) : index);
+
+  const sections = NEEDS_YOU_SECTIONS.map((section) => {
+    const matching = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === section.kind);
+    if (section.kind === "approval") {
+      matching.sort((a, b) => groupOrder(a.row, a.index) - groupOrder(b.row, b.index) || a.index - b.index);
+    }
+    return { ...section, rows: matching.map(({ row }) => row) };
+  }).filter((section) => section.rows.length > 0);
 
   return { timezone: settings.timezone, total: items.length, sections };
 }
@@ -403,13 +564,26 @@ export async function loadNeedsYou(userId: string): Promise<NeedsYouView> {
 export interface NextSevenDaysGroup {
   day: string;
   label: string;
+  // "Tue 10 Nov", shown beside "Today" and "Tomorrow".
+  dateLabel: string;
   reminders: Array<ReminderDetail & { timeLabel: string }>;
+}
+
+// One cell of the 7-day strip. Days with nothing planned are included, so the strip is a week.
+export interface StripDay {
+  day: string;
+  weekday: string;
+  dayOfMonth: string;
+  isToday: boolean;
+  count: number;
+  totals: MoneyAmount[];
 }
 
 export interface NextSevenDaysView {
   timezone: string;
   count: number;
   groups: NextSevenDaysGroup[];
+  days: StripDay[];
 }
 
 export async function loadNextSevenDays(userId: string, clock: Clock): Promise<NextSevenDaysView> {
@@ -426,16 +600,37 @@ export async function loadNextSevenDays(userId: string, clock: Clock): Promise<N
     const group = groups.get(day) ?? {
       day,
       label: dayLabel(day, today, tomorrow),
+      dateLabel: DateTime.fromISO(day, { zone: "utc" }).setLocale("en").toFormat("EEE d LLL"),
       reminders: [],
     };
     group.reminders.push({ ...detail, timeLabel: formatClock(item.plannedAt, settings.timezone) });
     groups.set(day, group);
   }
 
+  const days: StripDay[] = [];
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = DateTime.fromISO(today, { zone: "utc" }).plus({ days: offset }).setLocale("en");
+    const day = date.toISODate() ?? "";
+    const reminders = groups.get(day)?.reminders ?? [];
+    const totals = new Map<string, number>();
+    for (const r of reminders) totals.set(r.currency, (totals.get(r.currency) ?? 0) + r.amountMinor);
+    days.push({
+      day,
+      weekday: date.toFormat("EEE"),
+      dayOfMonth: date.toFormat("d"),
+      isToday: offset === 0,
+      count: reminders.length,
+      totals: [...totals.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([currency, amountMinor]) => ({ currency, amountMinor })),
+    });
+  }
+
   return {
     timezone: settings.timezone,
     count: upcoming.length,
     groups: [...groups.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    days,
   };
 }
 
@@ -455,6 +650,22 @@ export async function heldMessageIdsForClient(userId: string, clientId: string):
       `select m.id from scheduled_messages m join invoices i on i.id = m.invoice_id
         where m.user_id = $1 and i.client_id = $2 and m.status = 'held' order by m.planned_at, m.id`,
       [userId, clientId],
+    );
+    return rows.map((r) => r.id);
+  });
+}
+
+// The reminders on one invoice that are awaiting approval, oldest planned first. Throws
+// NotFoundError when the invoice is not the user's. Used by "Approve all N for <invoice>".
+export async function pendingApprovalIdsForInvoice(userId: string, invoiceId: string): Promise<string[]> {
+  if (!isUuid(invoiceId)) throw new NotFoundError("Invoice");
+  return withUser(userId, async (c) => {
+    const owned = await c.query("select 1 from invoices where id = $1 and user_id = $2", [invoiceId, userId]);
+    if (owned.rowCount === 0) throw new NotFoundError("Invoice");
+    const { rows } = await c.query<{ id: string }>(
+      `select id from scheduled_messages
+        where user_id = $1 and invoice_id = $2 and status = 'pending_approval' order by planned_at, id`,
+      [userId, invoiceId],
     );
     return rows.map((r) => r.id);
   });

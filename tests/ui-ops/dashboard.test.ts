@@ -5,9 +5,10 @@ import { fixedClock, systemClock } from "@/lib/clock";
 import { DateTime } from "luxon";
 import { closeDb } from "@/lib/db";
 import { recordPayment, setInvoiceStatus, setPaymentPlan } from "@/lib/engine";
-import { loadCurrencyTotals, loadDashboardState } from "@/lib/queries/dashboard";
+import { DASHBOARD_NEEDS_PREVIEW, loadCurrencyTotals, loadDashboardState, loadReadyToChase } from "@/lib/queries/dashboard";
+import { NEEDS_YOU_SECTIONS } from "@/lib/queries/ops";
 import { adminQuery } from "../helpers/db";
-import { newClient, newInvoice, newUser, PLAN_ISO, resetDb } from "./fixtures";
+import { newClient, newInvoice, newUser, PLAN_ISO, resetDb, runSendWindow, ScriptedEmail, SEND_ISO } from "./fixtures";
 
 // Every totals test uses this as "today", so overdue ages are exact.
 const TODAY = "2030-01-15";
@@ -173,5 +174,66 @@ describe("client order on the dashboard", () => {
     expect(state.kind).toBe("ready");
     if (state.kind !== "ready") throw new Error("expected ready");
     expect(state.data.clients.map((c) => c.name)).toEqual(["Bravo", "Charlie", "Alpha", "Delta", "Echo"]);
+  });
+});
+
+describe("Needs you preview on the dashboard", () => {
+  it("puts failed sends first, then follows the urgency order, with every kind counted", async () => {
+    const userId = await newUser({ onboarding: true });
+    // Two manual-approval invoices: eight reminders awaiting approval, more than the preview holds.
+    const manual = await newClient(userId, { name: "Harbour & Co", autoSend: false });
+    await newInvoice(userId, manual.clientId, { number: "HC-1", due: "2030-01-12" });
+    await newInvoice(userId, manual.clientId, { number: "HC-2", due: "2030-01-12" });
+    // One send the provider refuses: it fails, and was created after the approvals.
+    const refused = await newClient(userId, { name: "Orion Logistics", autoSend: true });
+    await newInvoice(userId, refused.clientId, { number: "OR-1", due: "2030-01-10" });
+    await runSendWindow(new ScriptedEmail(new Set([refused.email])));
+
+    const state = await loadDashboardState(userId, fixedClock(SEND_ISO));
+    if (state.kind !== "ready") throw new Error("expected ready");
+    const { preview, total, byKind } = state.data.needsYou;
+    expect(preview).toHaveLength(DASHBOARD_NEEDS_PREVIEW);
+    expect(preview[0].kind).toBe("failed");
+    expect(preview[0].clientName).toBe("Orion Logistics");
+    expect(preview.slice(1).every((row) => row.kind === "approval")).toBe(true);
+    const rank = (kind: string) => NEEDS_YOU_SECTIONS.findIndex((s) => s.kind === kind);
+    const ranks = preview.map((row) => rank(row.kind));
+    expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
+    expect(byKind).toEqual({ failed: 1, approval: 8 });
+    expect(total).toBe(9);
+  });
+});
+
+describe("loadReadyToChase", () => {
+  it("splits unpaid invoices into queued and the reasons they are not being chased", async () => {
+    const userId = await newUser({ onboarding: true });
+    const auto = await newClient(userId, { name: "Auto Co", autoSend: true });
+    await newInvoice(userId, auto.clientId, { number: "R-1", amountMinor: 1000, due: "2030-01-20" });
+    await newInvoice(userId, auto.clientId, { number: "R-2", amountMinor: 2000, currency: "EUR", due: "2030-01-20" });
+    const manual = await newClient(userId, { name: "Manual Co", autoSend: false });
+    await newInvoice(userId, manual.clientId, { number: "A-1", amountMinor: 3000, due: "2030-01-20" });
+    const disputed = await newInvoice(userId, auto.clientId, { number: "D-1", amountMinor: 4000, due: "2030-01-20" });
+    await setInvoiceStatus(userId, disputed, "disputed", fixedClock(PLAN_ISO));
+    const paused = await newInvoice(userId, auto.clientId, { number: "P-1", amountMinor: 5000, due: "2030-01-20" });
+    await setInvoiceStatus(userId, paused, "paused", fixedClock(PLAN_ISO));
+    // Every reminder already cancelled: the sequence has nothing left to send.
+    const ended = await newInvoice(userId, auto.clientId, { number: "E-1", amountMinor: 6000, due: "2030-01-20" });
+    await adminQuery("update scheduled_messages set status = 'cancelled' where invoice_id = $1", [ended]);
+    // Paid: not counted anywhere.
+    const paid = await newInvoice(userId, auto.clientId, { number: "X-1", amountMinor: 7000, due: "2030-01-20" });
+    await recordPayment({ userId, invoiceId: paid, installmentId: null, paidAt: new Date(), source: "manual", clock: fixedClock(PLAN_ISO) });
+
+    const ready = await loadReadyToChase(userId);
+    const by = Object.fromEntries(ready.states.map((s) => [s.state, s]));
+    expect(ready.states.map((s) => s.state)).toEqual(["ready", "approval", "paused", "disputed", "ended"]);
+    expect(by.ready.invoices).toBe(2);
+    expect(by.ready.totals).toEqual(expect.arrayContaining([{ currency: "USD", amountMinor: 1000 }, { currency: "EUR", amountMinor: 2000 }]));
+    expect(by.approval).toEqual({ state: "approval", invoices: 1, totals: [{ currency: "USD", amountMinor: 3000 }] });
+    expect(by.paused.totals).toEqual([{ currency: "USD", amountMinor: 5000 }]);
+    expect(by.disputed.totals).toEqual([{ currency: "USD", amountMinor: 4000 }]);
+    expect(by.ended.totals).toEqual([{ currency: "USD", amountMinor: 6000 }]);
+    expect(ready.nextSendAt).not.toBeNull();
+
+    expect((await loadReadyToChase(await newUser())).states).toEqual([]);
   });
 });

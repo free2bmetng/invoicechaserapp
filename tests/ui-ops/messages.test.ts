@@ -3,9 +3,11 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { closeDb } from "@/lib/db";
 import {
+  countMessageLogByStatus,
   listClientOptions,
   listMessageLog,
   MESSAGE_LOG_PAGE_SIZE,
+  MESSAGE_SEARCH_MAX_LENGTH,
   parseMessageLogFilters,
   type MessageLogPage,
 } from "@/lib/queries/messages";
@@ -35,7 +37,10 @@ async function sentMessages(): Promise<{ userId: string; clientId: string; email
   return { userId, clientId: client.clientId, email: client.email };
 }
 
-async function page(userId: string, params: { status?: string; client?: string; cursor?: string } = {}): Promise<MessageLogPage> {
+async function page(
+  userId: string,
+  params: { status?: string; client?: string; cursor?: string; q?: string } = {},
+): Promise<MessageLogPage> {
   return listMessageLog(userId, parseMessageLogFilters(params));
 }
 
@@ -120,5 +125,53 @@ describe("message log tenant isolation", () => {
     const { userId } = await sentMessages();
     const names = (await listClientOptions(userId)).map((c) => c.name);
     expect(names).toContain("Acme Ltd");
+  });
+});
+
+describe("message log search, status counts and amounts", () => {
+  it("parses the search and the selected message, and drops them when empty or malformed", () => {
+    const id = "00000000-0000-4000-8000-000000000000";
+    expect(parseMessageLogFilters({ q: "  acme   ltd ", id })).toEqual({ status: null, clientId: null, cursor: null, q: "acme ltd", selectedId: id });
+    const empty = parseMessageLogFilters({ q: "   ", id: "x" });
+    expect(empty.q).toBeUndefined();
+    expect(empty.selectedId).toBeUndefined();
+    expect(parseMessageLogFilters({ q: "a".repeat(500) }).q).toHaveLength(MESSAGE_SEARCH_MAX_LENGTH);
+  });
+
+  it("searches the client, invoice number, recipient and subject, case-insensitively", async () => {
+    const { userId, email } = await sentMessages();
+    expect((await page(userId, { q: "acme" })).rows).toHaveLength(MESSAGE_LOG_PAGE_SIZE);
+    const byNumber = await page(userId, { q: "msg-007" });
+    expect(byNumber.rows.map((r) => r.invoiceNumber)).toEqual(["MSG-007"]);
+    expect((await page(userId, { q: email.toUpperCase() })).rows.length).toBeGreaterThan(0);
+    expect((await page(userId, { q: "no such thing" })).rows).toHaveLength(0);
+  });
+
+  it("matches LIKE wildcards literally", async () => {
+    const { userId } = await sentMessages();
+    expect((await page(userId, { q: "%" })).rows).toHaveLength(0);
+    expect((await page(userId, { q: "MSG_00" })).rows).toHaveLength(0);
+  });
+
+  it("combines search with the status and client filters, and counts each status within them", async () => {
+    const { userId, clientId } = await sentMessages();
+    await adminQuery(
+      "update message_log m set delivery_status = 'bounced' from invoices i where i.id = m.invoice_id and i.invoice_number in ('MSG-001', 'MSG-002')",
+    );
+    expect((await page(userId, { q: "msg-00", status: "bounced" })).rows.map((r) => r.invoiceNumber).sort()).toEqual(["MSG-001", "MSG-002"]);
+
+    const counts = await countMessageLogByStatus(userId, parseMessageLogFilters({ client: clientId }));
+    expect(counts).toEqual({ all: SENT_COUNT, sent: SENT_COUNT - 2, delivered: 0, bounced: 2, failed: 0 });
+    const searched = await countMessageLogByStatus(userId, parseMessageLogFilters({ q: "MSG-001" }));
+    expect(searched).toEqual({ all: 1, sent: 0, delivered: 0, bounced: 1, failed: 0 });
+    expect(await countMessageLogByStatus(await newUser(), { clientId: null })).toEqual({ all: 0, sent: 0, delivered: 0, bounced: 0, failed: 0 });
+  });
+
+  it("carries the amount chased and the invoice id for each row", async () => {
+    const { userId } = await sentMessages();
+    const [row] = (await page(userId)).rows;
+    expect(row.amountMinor).toBe(10000);
+    expect(row.currency).toBe("USD");
+    expect(row.invoiceId).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

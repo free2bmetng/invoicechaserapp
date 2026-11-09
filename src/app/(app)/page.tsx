@@ -13,12 +13,8 @@ export const metadata: Metadata = { title: "Dashboard" };
 export default function DashboardPage() {
   return (
     <>
-      <PageHeader
-        eyebrow="Overview"
-        title="Dashboard"
-        description="What is owed, what is overdue, and what needs you today."
-      />
-      <div className="mt-8">
+      <PageHeader title="Dashboard" description="What is overdue, what is being chased, and what needs you." />
+      <div className="mt-6">
         <Suspense fallback={<DashboardSkeleton />}>
           <DashboardContent />
         </Suspense>

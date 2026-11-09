@@ -1,296 +1,396 @@
-// Dashboard panels. Server-rendered; no client state. Every money figure sits inside a
-// per-currency group, so amounts in different currencies are never added together.
+// Dashboard panels. Server-rendered; the only client parts are the inline row actions.
+// Every money figure sits inside a per-currency group, so amounts in different currencies are
+// never added together. The overdue total is the largest number on the page (DESIGN_V2).
 import Link from "next/link";
-import { Money } from "@/components/money";
-import { Badge, cx, EmptyState } from "@/components/ui";
-import type { CurrencyTotals, DashboardData } from "@/lib/queries/dashboard";
-import { formatDay, type NeedsYouRow } from "@/lib/queries/ops";
+import { ActionList, ActionRow, AgingBar, StatTile, Table, TBody, Td, Th, THead, Tr, type AgingBucket } from "@/components/data";
+import { Money, MoneyList } from "@/components/money";
+import { Badge, buttonClass, Card, cx, EmptyState } from "@/components/ui";
+import type { ChaseState, CurrencyTotals, DashboardData, ReadyToChase } from "@/lib/queries/dashboard";
+import { formatClock, formatDay, formatWhen, type NeedsYouRow } from "@/lib/queries/ops";
 import type { ClientListItem } from "@/lib/engine";
-import { KIND_BADGE, LINK_BUTTON_PRIMARY, LINK_BUTTON_SECONDARY, paymentPatternHeadline } from "./kinds";
+import { OpsFeedback } from "./feedback";
+import { hasQuickAction, KIND_BADGE, paymentPatternHeadline } from "./kinds";
+import { RowQuickAction } from "./needs-you-card";
 
 const CLIENT_ROWS_ON_DASHBOARD = 8;
 
-export function CurrencyTotalsCard({ totals, className }: { totals: CurrencyTotals; className?: string }) {
-  const { currency, overdueMinor, overdueByAge } = totals;
-  const segments = [
-    { label: "1–30 days", minor: overdueByAge.days1to30, bar: "bg-warn/40" },
-    { label: "31–60 days", minor: overdueByAge.days31to60, bar: "bg-warn/75" },
-    { label: "61+ days", minor: overdueByAge.days61plus, bar: "bg-danger" },
-  ];
-  return (
-    <section
-      aria-labelledby={`totals-${currency}`}
-      className={cx("rounded-[var(--radius-lg)] border border-line bg-surface p-5 shadow-card sm:p-6", className)}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h2 id={`totals-${currency}`} className="text-[13px] font-semibold uppercase tracking-[0.12em] text-ink-3">
-          {currency}
-        </h2>
-      </div>
-      <dl className="mt-4 grid gap-6 sm:grid-cols-2">
-        <div>
-          <dt className="text-[13px] text-ink-2">Outstanding</dt>
-          <dd className="mt-1 text-[28px] leading-9 font-semibold tracking-[-0.02em] text-ink">
-            <Money minor={totals.outstandingMinor} currency={currency} />
-          </dd>
-        </div>
-        <div>
-          <dt className="text-[13px] text-ink-2">Overdue</dt>
-          <dd className="mt-1 text-[28px] leading-9 font-semibold tracking-[-0.02em] text-warn">
-            <Money minor={overdueMinor} currency={currency} />
-          </dd>
-        </div>
-      </dl>
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
 
-      {overdueMinor > 0 ? (
-        <div className="mt-6">
-          <div aria-hidden="true" className="flex h-2 w-full overflow-hidden rounded-full bg-surface-2">
-            {segments.map((segment) =>
-              segment.minor > 0 ? (
-                <span key={segment.label} className={segment.bar} style={{ width: `${(segment.minor / overdueMinor) * 100}%` }} />
-              ) : null,
-            )}
+// ---- Overdue headline --------------------------------------------------------------------
+
+function agingBuckets(t: CurrencyTotals): AgingBucket[] {
+  const c = t.counts;
+  return [
+    { label: `Not yet due (${c.notDue})`, amountMinor: t.notDueMinor, tone: "neutral" },
+    { label: `1–30 days (${c.days1to30})`, amountMinor: t.overdueByAge.days1to30, tone: "warn" },
+    { label: `31–60 days (${c.days31to60})`, amountMinor: t.overdueByAge.days31to60, tone: "warn" },
+    { label: `61+ days (${c.days61plus})`, amountMinor: t.overdueByAge.days61plus, tone: "danger" },
+  ];
+}
+
+function CurrencyOverdue({ totals, lead }: { totals: CurrencyTotals; lead: boolean }) {
+  const overdue = totals.overdueMinor > 0;
+  if (!lead) {
+    // Other currencies: one compact line, with their own ageing from sm up.
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="flex flex-wrap items-baseline gap-x-2 text-small text-ink-2">
+          <span className="w-9 font-medium text-ink-3">{totals.currency}</span>
+          <Money minor={totals.overdueMinor} currency={totals.currency} className={cx("text-card-title", overdue ? "text-danger" : "text-ink")} />
+          <span>overdue of</span>
+          <Money minor={totals.outstandingMinor} currency={totals.currency} className="font-medium text-ink" />
+        </p>
+        {overdue ? (
+          <div className="max-sm:hidden">
+            <AgingBar buckets={agingBuckets(totals)} currency={totals.currency} />
           </div>
-          <ul className="mt-4 grid gap-2 sm:grid-cols-3">
-            {segments.map((segment) => (
-              <li key={segment.label} className="flex items-center justify-between gap-3 rounded-[10px] bg-surface-2 px-3 py-2 text-[13px]">
-                <span className="whitespace-nowrap text-ink-2">{segment.label}</span>
-                <Money minor={segment.minor} currency={currency} className="text-ink" />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <p className="mt-6 text-[14px] text-ink-2">Nothing is overdue in {currency}.</p>
-      )}
-    </section>
+        ) : null}
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p
+          className={cx(
+            "num text-[40px] leading-[44px] font-semibold tracking-[-0.03em] sm:text-[48px] sm:leading-[52px]",
+            overdue ? "text-danger" : "text-ink",
+          )}
+        >
+          <Money minor={totals.overdueMinor} currency={totals.currency} />
+        </p>
+        <p className="mt-1 text-small text-ink-2">
+          {overdue ? (
+            <>
+              {plural(totals.counts.overdue, "invoice", "invoices")} overdue, of{" "}
+              <Money minor={totals.outstandingMinor} currency={totals.currency} className="font-medium text-ink" /> outstanding
+            </>
+          ) : (
+            <>
+              Nothing is overdue. <Money minor={totals.outstandingMinor} currency={totals.currency} className="font-medium text-ink" />{" "}
+              outstanding, all due later.
+            </>
+          )}
+        </p>
+      </div>
+      <AgingBar buckets={agingBuckets(totals)} currency={totals.currency} />
+    </div>
   );
 }
 
-export function NeedsYouPanel({ total, preview }: { total: number; preview: NeedsYouRow[] }) {
+export function OverdueCard({ data, className }: { data: DashboardData; className?: string }) {
+  const ordered = [...data.totals].sort((a, b) =>
+    a.currency === data.primaryCurrency ? -1 : b.currency === data.primaryCurrency ? 1 : a.currency.localeCompare(b.currency),
+  );
   return (
-    <section aria-labelledby="dash-needs" className="flex flex-col rounded-[var(--radius-lg)] border border-line bg-surface p-5 shadow-card sm:p-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 id="dash-needs" className="text-[16px] font-semibold text-ink">
-          Needs you
-        </h2>
-        {total > 0 ? <Badge tone="warn">{total} waiting</Badge> : null}
+    <Card className={cx("flex flex-col gap-5 p-5 sm:p-6", className)}>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-card-title text-ink">Overdue</h2>
+        <p className="text-small text-ink-3">
+          As of <time dateTime={data.asOf}>{formatClock(data.asOf, data.timezone)}</time>
+        </p>
       </div>
-      {total === 0 ? (
-        <EmptyState
-          title="Nothing needs you"
-          body="Reminders waiting for approval, failed sends, client replies and bounces appear here."
-        />
-      ) : (
-        <>
-          <ul className="mt-4 divide-y divide-line">
-            {preview.map((row) => {
-              const badge = KIND_BADGE[row.kind];
-              const meta = row.reminder
-                ? [row.reminder.stepLabel, row.plannedLabel ? `planned ${row.plannedLabel}` : null].filter(Boolean).join(" · ")
-                : row.detail;
+      {ordered.map((totals, i) => (
+        <div key={totals.currency} className={cx(i === 1 && "border-t border-line pt-4")}>
+          <CurrencyOverdue totals={totals} lead={i === 0} />
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+// ---- Ready to chase ----------------------------------------------------------------------
+
+const CHASE_REASON: Record<Exclude<ChaseState, "ready">, { label: string; href: string }> = {
+  approval: { label: "Awaiting your approval", href: "/needs-you" },
+  held: { label: "On hold (a reply or a bounce)", href: "/needs-you" },
+  paused: { label: "Paused", href: "/invoices?status=paused" },
+  disputed: { label: "Disputed", href: "/invoices?status=disputed" },
+  ended: { label: "Sequence finished", href: "/invoices?status=open" },
+};
+
+export function ReadyToChaseCard({ ready, timezone, className }: { ready: ReadyToChase; timezone: string; className?: string }) {
+  const queued = ready.states.find((s) => s.state === "ready");
+  const blocked = ready.states.filter((s) => s.state !== "ready");
+  return (
+    <Card className={cx("flex flex-col p-5 sm:p-6", className)}>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-card-title text-ink">Ready to chase</h2>
+        <Link href="/next-7-days" className="text-small font-medium text-accent underline-offset-4 hover:underline">
+          Next 7 days
+        </Link>
+      </div>
+      <p className="num mt-3 text-[28px] leading-8 font-semibold tracking-[-0.02em] text-ink">
+        {queued ? <MoneyList amounts={queued.totals} className="justify-start" /> : "Nothing queued"}
+      </p>
+      <p className="mt-1 text-small text-ink-2">
+        {queued ? (
+          <>
+            {plural(queued.invoices, "invoice has", "invoices have")} a reminder queued.
+            {ready.nextSendAt ? (
+              <>
+                {" "}
+                The next goes out <span className="font-medium text-ink">{formatWhen(ready.nextSendAt, timezone)}</span>.
+              </>
+            ) : null}
+          </>
+        ) : (
+          "No unpaid invoice has a reminder waiting to go out."
+        )}
+      </p>
+
+      <div className="mt-5 border-t border-line pt-4">
+        <h3 className="text-small font-medium text-ink-2">Not being chased</h3>
+        {blocked.length === 0 ? (
+          <p className="mt-2 text-small text-ink-3">Every unpaid invoice has a reminder queued.</p>
+        ) : (
+          <ul className="mt-1 -mx-2">
+            {blocked.map((s) => {
+              const reason = CHASE_REASON[s.state as Exclude<ChaseState, "ready">];
               return (
-                <li key={row.key} className="flex flex-col gap-1 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={badge.tone}>{badge.label}</Badge>
-                  </div>
-                  <p className="text-[14px] leading-6 font-medium text-ink">{row.title}</p>
-                  <p className="text-[13px] leading-5 text-ink-2">{meta}</p>
+                <li key={s.state}>
+                  <Link
+                    href={reason.href}
+                    className="flex min-h-11 items-center justify-between gap-3 rounded-[8px] px-2 py-1.5 text-small transition-colors hover:bg-surface-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-ink">{reason.label}</span>
+                      <span className="num block text-ink-3">{plural(s.invoices, "invoice", "invoices")}</span>
+                    </span>
+                    <MoneyList amounts={s.totals} className="max-w-[60%] font-medium text-ink" />
+                  </Link>
                 </li>
               );
             })}
           </ul>
-          <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-4">
-            <p className="text-[13px] text-ink-3">
-              {total > preview.length ? `Showing ${preview.length} of ${total}.` : `${total} item${total === 1 ? "" : "s"}.`}
-            </p>
-            <Link href="/needs-you" className={LINK_BUTTON_SECONDARY}>
-              Open Needs you
-            </Link>
-          </div>
-        </>
-      )}
-    </section>
+        )}
+      </div>
+    </Card>
   );
 }
 
-export function NextSevenDaysPanel({ planned }: { planned: number }) {
+// ---- KPI tiles -----------------------------------------------------------------------------
+
+function primaryAndOthers<T extends { currency: string }>(items: readonly T[], primary: string | null): { lead: T | null; rest: T[] } {
+  const lead = items.find((t) => t.currency === primary) ?? items[0] ?? null;
+  return { lead, rest: items.filter((t) => t !== lead) };
+}
+
+function StatTiles({ data }: { data: DashboardData }) {
+  const { lead, rest } = primaryAndOthers(data.totals, data.primaryCurrency);
+  const outstandingCount = data.totals.reduce((n, t) => n + t.counts.outstanding, 0);
+  const dueWeekCount = data.totals.reduce((n, t) => n + t.counts.dueThisWeek, 0);
+  const others = (pick: (t: CurrencyTotals) => number) =>
+    rest.filter((t) => pick(t) > 0).map((t) => ({ amountMinor: pick(t), currency: t.currency }));
+  const broken = (data.needsYou.byKind.failed ?? 0) + (data.needsYou.byKind.bounce ?? 0) + (data.needsYou.byKind.needs_check ?? 0);
+  const approvals = data.needsYou.byKind.approval ?? 0;
+  const needsSub =
+    data.needsYou.total === 0
+      ? "All caught up"
+      : [broken > 0 ? `${broken} failed or bounced` : null, approvals > 0 ? `${approvals} to approve` : null]
+          .filter(Boolean)
+          .join(" · ") || plural(data.needsYou.total, "item", "items");
+
+  const withOthers = (base: string, amounts: { amountMinor: number; currency: string }[]) =>
+    amounts.length > 0 ? (
+      <>
+        {base} · also <MoneyList amounts={amounts} />
+      </>
+    ) : (
+      base
+    );
+
   return (
-    <section
-      aria-labelledby="dash-next7"
-      className="flex flex-col gap-4 rounded-[var(--radius-lg)] border border-line bg-surface p-5 shadow-card sm:flex-row sm:items-center sm:justify-between sm:p-6"
-    >
-      <div className="min-w-0">
-        <h2 id="dash-next7" className="text-[16px] font-semibold text-ink">
-          Next 7 days
-        </h2>
-        {planned === 0 ? (
-          <p className="mt-1 text-[14px] leading-6 text-ink-2">
-            No reminders are planned this week. They appear here once an open invoice has a step due.
-          </p>
-        ) : (
-          <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="num text-[32px] leading-none font-semibold tracking-[-0.03em] text-ink">{planned}</span>
-            <span className="text-[14px] leading-6 text-ink-2">
-              {planned === 1 ? "reminder is" : "reminders are"} planned in the next seven days, in your timezone.
-            </span>
-          </p>
-        )}
-      </div>
-      <Link href="/next-7-days" className={`${LINK_BUTTON_SECONDARY} self-start sm:self-auto`}>
-        Review the week
-      </Link>
-    </section>
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4 [&>*:nth-child(-n+2)]:max-sm:col-span-2">
+      <StatTile
+        label="Outstanding"
+        href="/invoices"
+        value={lead ? <Money minor={lead.outstandingMinor} currency={lead.currency} /> : "None"}
+        sub={withOthers(plural(outstandingCount, "invoice", "invoices"), others((t) => t.outstandingMinor))}
+      />
+      <StatTile
+        label="Due this week"
+        href="/invoices?status=open"
+        value={lead ? <Money minor={lead.dueThisWeekMinor} currency={lead.currency} /> : "None"}
+        sub={withOthers(plural(dueWeekCount, "invoice", "invoices"), others((t) => t.dueThisWeekMinor))}
+      />
+      <StatTile
+        label="Waiting for you"
+        href="/needs-you"
+        tone={broken > 0 ? "danger" : data.needsYou.total > 0 ? "warn" : "neutral"}
+        value={data.needsYou.total}
+        sub={needsSub}
+      />
+      <StatTile label="Reminders this week" href="/next-7-days" value={data.plannedNext7Days} sub="Planned for the next 7 days" />
+    </div>
   );
 }
+
+// ---- Needs you preview -------------------------------------------------------------------
+
+export function NeedsYouPreview({ total, preview }: { total: number; preview: NeedsYouRow[] }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+        <h2 className="flex items-baseline gap-2 text-card-title text-ink">
+          Needs you
+          {total > 0 ? <span className="num text-small font-medium text-ink-3">{total}</span> : null}
+        </h2>
+        {total > 0 ? (
+          <Link href="/needs-you" className={buttonClass("secondary", "sm")}>
+            {total > preview.length ? `See all ${total}` : "Open Needs you"}
+          </Link>
+        ) : null}
+      </div>
+      {total === 0 ? (
+        <p className="px-4 py-6 text-body text-ink-2 sm:px-5">
+          Nothing needs you. Failed sends, approvals, replies and bounces appear here first.
+        </p>
+      ) : (
+        <OpsFeedback>
+          <ActionList label="Most urgent items">
+            {preview.map((row) => {
+              const badge = KIND_BADGE[row.kind];
+              return (
+                <ActionRow
+                  key={row.key}
+                  href={`/needs-you?item=${encodeURIComponent(row.key)}`}
+                  client={row.clientName ?? row.title}
+                  title={row.line.title}
+                  meta={row.line.meta}
+                  amount={<MoneyList amounts={row.atStake} />}
+                  status={<Badge tone={badge.tone}>{badge.label}</Badge>}
+                  actions={hasQuickAction(row) ? <RowQuickAction row={row} /> : undefined}
+                  tone={row.kind === "failed" || row.kind === "bounce" ? "danger" : undefined}
+                />
+              );
+            })}
+          </ActionList>
+        </OpsFeedback>
+      )}
+    </Card>
+  );
+}
+
+// ---- Clients -------------------------------------------------------------------------------
 
 function daysToPayLabel(days: number | null): string {
   if (days === null) return "";
   return `${days} ${days === 1 ? "day" : "days"}`;
 }
 
-function OverdueList({ totals }: { totals: ClientListItem["overdue"] }) {
-  const nonZero = totals.filter((t) => t.amountMinor > 0);
-  if (nonZero.length === 0) return <span className="text-ink-3">–</span>;
-  return (
-    <span className="flex flex-col gap-0.5">
-      {nonZero.map((t) => (
-        <Money key={t.currency} minor={t.amountMinor} currency={t.currency} className="text-warn" />
-      ))}
-    </span>
-  );
-}
-
-// The payment-pattern column. A single dash when the client has no paid invoice yet.
+// The payment-pattern column. Null (an empty cell) when the client has no paid invoice yet.
 export function paymentPatternCell(
   avgDaysLate: number | null,
   averageDaysToPay: number | null,
-): { headline: string; secondary: string | null } {
-  if (avgDaysLate === null) return { headline: "–", secondary: null };
+): { headline: string | null; secondary: string | null } {
+  if (avgDaysLate === null) return { headline: null, secondary: null };
   return {
     headline: paymentPatternHeadline(avgDaysLate),
     secondary: averageDaysToPay === null ? null : `Average ${daysToPayLabel(averageDaysToPay)} to pay`,
   };
 }
 
-// The last-contact column. A single dash when there has been no contact.
-export function lastContactText(lastContactAt: Date | null, timezone: string): string {
-  return lastContactAt ? formatDay(lastContactAt, timezone) : "–";
+// The last-contact column. Null (an empty cell) when there has been no contact.
+export function lastContactText(lastContactAt: Date | null, timezone: string): string | null {
+  return lastContactAt ? formatDay(lastContactAt, timezone) : null;
 }
 
-export function ClientsPanel({ clients, timezone, totalClients }: { clients: ClientListItem[]; timezone: string; totalClients: number }) {
+export function ClientsTable({
+  clients,
+  timezone,
+  oldestOverdueDays,
+}: {
+  clients: ClientListItem[];
+  timezone: string;
+  oldestOverdueDays: Record<string, number>;
+}) {
   const shown = clients.slice(0, CLIENT_ROWS_ON_DASHBOARD);
   return (
-    <section aria-labelledby="dash-clients" className="rounded-[var(--radius-lg)] border border-line bg-surface shadow-card">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4 sm:px-6">
-        <div>
-          <h2 id="dash-clients" className="text-[16px] font-semibold text-ink">
-            Clients
-          </h2>
-          <p className="text-[13px] text-ink-3">Ordered by the oldest overdue invoice. Overdue amounts are per currency.</p>
-        </div>
-        {totalClients > shown.length ? (
-          <Link href="/clients" className="inline-flex min-h-11 items-center text-[14px] font-medium text-accent underline-offset-4 hover:underline">
-            View all {totalClients} clients
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-3 sm:px-5">
+        <h2 className="text-card-title text-ink">Clients</h2>
+        <p className="text-small text-ink-3">Oldest overdue first</p>
+        {clients.length > shown.length ? (
+          <Link href="/clients" className="ml-auto text-small font-medium text-accent underline-offset-4 hover:underline">
+            All {clients.length} clients
           </Link>
         ) : null}
       </div>
-
-      <div className="hidden overflow-x-auto md:block">
-        <table className="w-full min-w-[640px] border-collapse text-left text-[14px]">
-          <thead>
-            <tr className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-3">
-              <th scope="col" className="px-6 py-3 font-semibold">Client</th>
-              <th scope="col" className="px-4 py-3 font-semibold">Payment pattern</th>
-              <th scope="col" className="px-4 py-3 font-semibold">Overdue</th>
-              <th scope="col" className="px-6 py-3 font-semibold">Last contact</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {shown.map((client) => {
-              const pattern = paymentPatternCell(client.avgDaysLate, client.averageDaysToPay);
-              return (
-                <tr key={client.id} className="align-top">
-                  <th scope="row" className="px-6 py-3.5 font-medium text-ink">
-                    <Link href={`/clients/${client.id}`} className="underline-offset-4 hover:underline">
-                      {client.name}
-                    </Link>
-                  </th>
-                  <td className="px-4 py-3.5 text-ink-2">
-                    <span className="block font-medium text-ink">{pattern.headline}</span>
-                    {pattern.secondary ? <span className="num block text-[13px] text-ink-3">{pattern.secondary}</span> : null}
-                  </td>
-                  <td className="px-4 py-3.5"><OverdueList totals={client.overdue} /></td>
-                  <td className="px-6 py-3.5 text-ink-2">{lastContactText(client.lastContactAt, timezone)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <ul className="divide-y divide-line md:hidden">
-        {shown.map((client) => {
-          const pattern = paymentPatternCell(client.avgDaysLate, client.averageDaysToPay);
-          const detail = [pattern.secondary, lastContactText(client.lastContactAt, timezone)].filter(Boolean).join(" · ");
-          return (
-            <li key={client.id} className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-5 py-2.5">
-              <Link href={`/clients/${client.id}`} className="inline-flex min-h-11 min-w-0 items-center truncate text-[15px] font-medium text-ink underline-offset-4 hover:underline">
-                {client.name}
-              </Link>
-              <span className="text-right text-[14px]">
-                <OverdueList totals={client.overdue} />
-              </span>
-              <span className="col-span-2 text-[14px] leading-6 font-medium text-ink">{pattern.headline}</span>
-              <span className="col-span-2 text-[13px] leading-5 text-ink-3">{detail}</span>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+      <Table label="Clients, oldest overdue invoice first">
+        <THead>
+          <Th>Client</Th>
+          <Th align="right">Overdue</Th>
+          <Th>Oldest overdue</Th>
+          <Th>Typically pays</Th>
+          <Th>Last contact</Th>
+        </THead>
+        <TBody>
+          {shown.map((client) => {
+            const pattern = paymentPatternCell(client.avgDaysLate, client.averageDaysToPay);
+            const overdue = client.overdue.filter((t) => t.amountMinor > 0);
+            const days = oldestOverdueDays[client.id];
+            return (
+              <Tr key={client.id} href={`/clients/${client.id}`} tone={days !== undefined && days > 60 ? "danger" : undefined}>
+                <Td primary>{client.name}</Td>
+                <Td primary numeric>
+                  {overdue.length > 0 ? <MoneyList amounts={overdue} className="text-ink" /> : null}
+                </Td>
+                <Td label="Oldest">
+                  {days !== undefined ? <span className="text-danger">{plural(days, "day", "days")} overdue</span> : null}
+                </Td>
+                <Td label="Pays">{pattern.headline}</Td>
+                <Td label="Last contact">{lastContactText(client.lastContactAt, timezone)}</Td>
+              </Tr>
+            );
+          })}
+        </TBody>
+      </Table>
+    </Card>
   );
 }
 
 // Shown when no invoice exists yet. Says what to do next.
 export function NoInvoicesYet() {
   return (
-    <EmptyState
-      title="No invoices yet"
-      body="Add your first invoice by hand, or import a CSV from your spreadsheet. Reminders are planned as soon as an invoice is open."
-      action={
-        <Link href="/invoices" className={LINK_BUTTON_PRIMARY}>
-          Add or import invoices
-        </Link>
-      }
-    />
+    <Card as="div">
+      <EmptyState
+        title="No invoices yet"
+        body="Add your first invoice by hand, or import a CSV from your spreadsheet. Reminders are planned as soon as an invoice is open."
+        action={
+          <Link href="/invoices" className={buttonClass("primary")}>
+            Add or import invoices
+          </Link>
+        }
+      />
+    </Card>
   );
 }
 
 export function DashboardBody({ data }: { data: DashboardData }) {
-  const oddCount = data.totals.length % 2 === 1;
   return (
-    <div className="flex flex-col gap-6">
-      <NeedsYouPanel total={data.needsYou.total} preview={data.needsYou.preview} />
-      <NextSevenDaysPanel planned={data.plannedNext7Days} />
-      <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-[16px] font-semibold text-ink">Money owed</h2>
-          <p className="mt-1 text-[13px] text-ink-3">Shown per currency. Amounts in different currencies are never added together.</p>
-        </div>
-        {data.totals.length === 0 ? (
-          <EmptyState title="Nothing is owed right now" body="Outstanding amounts appear here as soon as an invoice is open and unpaid." />
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {data.totals.map((totals, index) => {
-              const isLast = index === data.totals.length - 1;
-              return (
-                <CurrencyTotalsCard key={totals.currency} totals={totals} className={oddCount && isLast ? "lg:col-span-2" : undefined} />
-              );
-            })}
-          </div>
-        )}
+    <div className="grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+      {data.totals.length === 0 ? (
+        <Card className="p-5 sm:p-6 max-lg:order-1">
+          <h2 className="text-card-title text-ink">Overdue</h2>
+          <p className="num mt-3 text-[40px] leading-[44px] font-semibold text-ink">Nothing owed</p>
+          <p className="mt-1 text-small text-ink-2">Every invoice is paid or closed.</p>
+        </Card>
+      ) : (
+        <OverdueCard data={data} className="max-lg:order-1" />
+      )}
+      <ReadyToChaseCard ready={data.readyToChase} timezone={data.timezone} className="max-lg:order-3" />
+      <div className="lg:col-span-2 max-lg:order-4">
+        <StatTiles data={data} />
       </div>
-      <ClientsPanel clients={data.clients} timezone={data.timezone} totalClients={data.clients.length} />
+      <div className="lg:col-span-2 max-lg:order-2">
+        <NeedsYouPreview total={data.needsYou.total} preview={data.needsYou.preview} />
+      </div>
+      <div className="lg:col-span-2 max-lg:order-5">
+        <ClientsTable clients={data.clients} timezone={data.timezone} oldestOverdueDays={data.oldestOverdueDays} />
+      </div>
     </div>
   );
 }

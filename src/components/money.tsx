@@ -25,3 +25,29 @@ export function Money({
   }
   return <span className={cx("num whitespace-nowrap", className)}>{text}</span>;
 }
+
+// Several per-currency amounts, one after another ("£1,200.00 · €300.00"). They are listed,
+// never added together. Renders nothing for an empty list.
+export function MoneyList({
+  amounts,
+  className,
+}: {
+  amounts: readonly { amountMinor: number; currency: string }[];
+  className?: string;
+}) {
+  if (amounts.length === 0) return null;
+  return (
+    <span className={cx("num inline-flex flex-wrap items-baseline justify-end gap-x-1.5", className)}>
+      {amounts.map((a, i) => (
+        <span key={a.currency} className="whitespace-nowrap">
+          {i > 0 ? (
+            <span aria-hidden="true" className="mr-1.5 text-ink-3">
+              ·
+            </span>
+          ) : null}
+          <Money minor={a.amountMinor} currency={a.currency} />
+        </span>
+      ))}
+    </span>
+  );
+}

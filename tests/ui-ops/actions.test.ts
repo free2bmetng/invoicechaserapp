@@ -373,3 +373,67 @@ describe("marking a payment that arrived while disputed as reviewed", () => {
     });
   });
 });
+
+describe("approve all for one invoice", () => {
+  async function pendingIds(invoiceId: string): Promise<string[]> {
+    const { rows } = await adminQuery<{ id: string }>(
+      "select id from scheduled_messages where invoice_id = $1 and status = 'pending_approval' order by planned_at",
+      [invoiceId],
+    );
+    return rows.map((r) => r.id);
+  }
+
+  it("requires a signed-in user, before touching anything", async () => {
+    const owner = await newUser();
+    const { invoiceId } = await awaitingApproval(owner);
+    const before = await pendingIds(invoiceId);
+    await expect(actions.approveAllForInvoice(fields({ invoiceId }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(await pendingIds(invoiceId)).toEqual(before);
+  });
+
+  it("refuses a missing or malformed invoice id", async () => {
+    session.userId = await newUser();
+    await expect(actions.approveAllForInvoice(fields({}))).resolves.toEqual(failed(BAD_ITEM));
+    await expect(actions.approveAllForInvoice(fields({ invoiceId: "not-a-uuid" }))).resolves.toEqual(failed(BAD_ITEM));
+  });
+
+  it("refuses another account's invoice, and leaves its reminders awaiting approval", async () => {
+    const owner = await newUser();
+    const { invoiceId } = await awaitingApproval(owner);
+    const before = await pendingIds(invoiceId);
+    expect(before.length).toBeGreaterThan(1);
+
+    session.userId = await newUser();
+    await expect(actions.approveAllForInvoice(fields({ invoiceId }))).resolves.toEqual(failed());
+    expect(await pendingIds(invoiceId)).toEqual(before);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("approves only that invoice's reminders awaiting approval", async () => {
+    session.userId = await newUser();
+    const target = await awaitingApproval(session.userId);
+    const targetIds = await pendingIds(target.invoiceId);
+    expect(targetIds.length).toBeGreaterThan(1);
+
+    // One of the target's reminders is held: it is not awaiting approval, so it stays held.
+    await setRowStatus(targetIds[targetIds.length - 1], "held");
+    const toApprove = targetIds.slice(0, -1);
+
+    // Another invoice for the same client, also awaiting approval: left alone.
+    const sibling = await newInvoice(session.userId, target.client.clientId, { number: uniqueNumber(), due: "2030-01-12" });
+    const siblingIds = await pendingIds(sibling);
+
+    const result = await actions.approveAllForInvoice(fields({ invoiceId: target.invoiceId }));
+    expect(result).toEqual({ ok: true, message: `Approved ${toApprove.length} reminders. Each goes out at its planned time.` });
+    for (const id of toApprove) expect(await statusOf(id)).toBe("scheduled");
+    expect(await statusOf(targetIds[targetIds.length - 1])).toBe("held");
+    expect(await pendingIds(sibling)).toEqual(siblingIds);
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+
+    // A second press finds nothing left to approve.
+    await expect(actions.approveAllForInvoice(fields({ invoiceId: target.invoiceId }))).resolves.toEqual({
+      ok: true,
+      message: "Nothing on this invoice was waiting for approval.",
+    });
+  });
+});

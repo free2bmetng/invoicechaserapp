@@ -20,18 +20,17 @@ export function QueueSkeleton({ rows = 3 }: { rows?: number }) {
 
 export function DashboardSkeleton() {
   return (
-    <div role="status" className="flex flex-col gap-6">
+    <div role="status">
       <span className="sr-only">Loading your dashboard</span>
-      <div aria-hidden="true" className="flex flex-col gap-6">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="skeleton h-56" />
-          <div className="skeleton h-56" />
+      <div aria-hidden="true" className="grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+        <div className="skeleton h-64 rounded-[var(--radius-lg)]" />
+        <div className="skeleton h-64 rounded-[var(--radius-lg)]" />
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:col-span-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="skeleton h-28 rounded-[var(--radius-md)]" />
+          ))}
         </div>
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <div className="skeleton h-64" />
-          <div className="skeleton h-64" />
-        </div>
-        <div className="skeleton h-72" />
+        <div className="skeleton h-72 rounded-[var(--radius-lg)] lg:col-span-2" />
       </div>
     </div>
   );

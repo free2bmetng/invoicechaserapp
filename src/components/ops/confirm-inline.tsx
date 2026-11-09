@@ -12,7 +12,8 @@ export function ConfirmInline({
   confirmLabel,
   pending,
   onConfirm,
-  triggerVariant = "secondary",
+  triggerVariant = "ghost",
+  size = "md",
 }: {
   trigger: string;
   question: string;
@@ -20,7 +21,10 @@ export function ConfirmInline({
   confirmLabel: string;
   pending: boolean;
   onConfirm: () => void;
-  triggerVariant?: "quiet" | "secondary" | "danger";
+  // "quiet" is kept as an alias of "ghost".
+  triggerVariant?: "ghost" | "quiet" | "secondary";
+  // Match the buttons beside the trigger, so one row never mixes sizes.
+  size?: "sm" | "md";
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -41,37 +45,24 @@ export function ConfirmInline({
   }, [open]);
 
   return (
-    <div ref={rootRef} className="flex flex-col gap-3">
+    <div ref={rootRef} className="contents">
       <div>
-        {triggerVariant === "quiet" ? (
-          <button
-            type="button"
-            data-trigger
-            aria-expanded={open}
-            aria-controls={id}
-            disabled={pending}
-            onClick={() => setOpen((value) => !value)}
-            className="inline-flex min-h-11 items-center rounded-[10px] px-3 text-[14px] font-medium text-ink-2 underline-offset-4 transition-colors hover:text-danger hover:underline focus-visible:text-danger focus-visible:underline disabled:opacity-50"
-          >
-            {trigger}
-          </button>
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            variant={triggerVariant}
-            data-trigger
-            aria-expanded={open}
-            aria-controls={id}
-            disabled={pending}
-            onClick={() => setOpen((value) => !value)}
-          >
-            {trigger}
-          </Button>
-        )}
+        <Button
+          type="button"
+          size={size}
+          variant={triggerVariant === "secondary" ? "secondary" : "ghost"}
+          data-trigger
+          aria-expanded={open}
+          aria-controls={id}
+          disabled={pending}
+          onClick={() => setOpen((value) => !value)}
+          className={triggerVariant === "secondary" ? undefined : "hover:text-danger"}
+        >
+          {trigger}
+        </Button>
       </div>
       {open ? (
-        <div id={id} role="group" aria-labelledby={`${id}-question`} className="rounded-[12px] border border-danger/30 bg-danger-soft p-4">
+        <div id={id} role="group" aria-labelledby={`${id}-question`} className="w-full max-w-md rounded-[12px] border border-danger/30 bg-danger-soft p-4">
           <p id={`${id}-question`} className="text-[14px] font-semibold text-ink">
             {question}
           </p>

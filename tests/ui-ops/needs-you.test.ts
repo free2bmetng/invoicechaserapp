@@ -69,7 +69,8 @@ describe("loadNeedsYou", () => {
     await recordBounce({ provider: "fake", providerMessageId: await providerIdFor(mapleMessage), clock: fixedClock("2030-01-10T11:00:00.000Z") });
 
     const view = await loadNeedsYou(userId);
-    expect(view.sections.map((s) => s.kind)).toEqual(["approval", "failed", "needs_check", "reply", "bounce", "disputed"]);
+    // DESIGN_V2: most urgent first. Things that broke lead, then decisions, then information.
+    expect(view.sections.map((s) => s.kind)).toEqual(["failed", "needs_check", "bounce", "approval", "reply", "disputed"]);
     expect(view.total).toBe(view.sections.reduce((n, s) => n + s.rows.length, 0));
 
     const approvals = view.sections.find((s) => s.kind === "approval")!;
@@ -93,6 +94,21 @@ describe("loadNeedsYou", () => {
     const bounceRow = view.sections.find((s) => s.kind === "bounce")!.rows[0];
     expect(bounceRow.bounce).toEqual({ currentEmail: sends.email, bouncedEmail: sends.email });
     expect(view.sections.find((s) => s.kind === "disputed")!.rows[0].invoiceId).toBe(pc);
+
+    // Rows lead with the client and carry the money at stake.
+    const failedRow = view.sections.find((s) => s.kind === "failed")!.rows[0];
+    expect(failedRow.clientName).toBe("Orion Logistics");
+    expect(failedRow.line.title).toBe("OR-1");
+    expect(failedRow.atStake).toEqual([{ amountMinor: 10000, currency: "USD" }]);
+    expect(approvalRow.clientName).toBe("Harbour & Co");
+    expect(approvalRow.invoiceApprovals).toBe(approvals.rows.length);
+    const replyRow = view.sections.find((s) => s.kind === "reply")!.rows[0];
+    expect(replyRow.clientName).toBe("Quill Labs");
+    expect(replyRow.heldCount).toBeGreaterThan(0);
+    expect(replyRow.atStake).toEqual([{ amountMinor: 10000, currency: "USD" }]);
+    const disputedRow = view.sections.find((s) => s.kind === "disputed")!.rows[0];
+    expect(disputedRow.invoiceNumber).toBe("PC-1");
+    expect(disputedRow.clientName).toBe("Paper Crane");
   });
 
   it("shows what was meant to go out for a delivery check, from the text recorded before the provider call", async () => {

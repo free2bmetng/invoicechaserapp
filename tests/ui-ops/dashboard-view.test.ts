@@ -1,11 +1,11 @@
-// The dashboard client table's dash rules. A single dash replaces the filler for a client with no
-// paid invoice, and for a client with no contact.
+// The dashboard client table's empty cells. DESIGN_V2 replaces the old single dash with an empty
+// cell (null), which the shared Table hides on phone, so there are no bare dashes.
 import { describe, expect, it } from "vitest";
 import { lastContactText, paymentPatternCell } from "@/components/ops/dashboard-view";
 
-describe("dash rules on the dashboard clients table", () => {
-  it("shows a single dash for the payment pattern when the client has no paid invoice", () => {
-    expect(paymentPatternCell(null, null)).toEqual({ headline: "–", secondary: null });
+describe("empty cells on the dashboard clients table", () => {
+  it("leaves the payment pattern empty when the client has no paid invoice", () => {
+    expect(paymentPatternCell(null, null)).toEqual({ headline: null, secondary: null });
   });
 
   it("shows the pattern, and the average from the issue date as the secondary line", () => {
@@ -13,8 +13,8 @@ describe("dash rules on the dashboard clients table", () => {
     expect(paymentPatternCell(-2, 9)).toEqual({ headline: "Paid early", secondary: "Average 9 days to pay" });
   });
 
-  it("shows a single dash for last contact when there has been no contact", () => {
-    expect(lastContactText(null, "UTC")).toBe("–");
+  it("leaves last contact empty when there has been no contact", () => {
+    expect(lastContactText(null, "UTC")).toBeNull();
   });
 
   it("shows the date of the last contact in the user's timezone", () => {

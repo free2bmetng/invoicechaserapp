@@ -22,7 +22,7 @@ import {
   ValidationError,
 } from "@/lib/engine";
 import { acknowledgePaidWhileDisputed } from "@/lib/engine";
-import { heldMessageIdsForClient, isUuid } from "@/lib/queries/ops";
+import { heldMessageIdsForClient, isUuid, pendingApprovalIdsForInvoice } from "@/lib/queries/ops";
 import { requireUserId } from "@/lib/session";
 
 export type OpsResult = { ok: true; message: string } | { ok: false; message: string };
@@ -90,6 +90,34 @@ export async function approveReminder(formData: FormData): Promise<OpsResult> {
   return attempt(async () => {
     await approveMessage(userId, messageId, systemClock);
     return "Approved. It goes out in the next send window.";
+  });
+}
+
+// Approves every reminder on one invoice that is awaiting approval, one engine call each, so
+// every row keeps its own state history. Ownership is checked by pendingApprovalIdsForInvoice;
+// reminders on other invoices and rows in any other state are never touched.
+export async function approveAllForInvoice(formData: FormData): Promise<OpsResult> {
+  const userId = await requireUserId();
+  const invoiceId = idField(formData, "invoiceId");
+  if (!invoiceId) return failure(BAD_ITEM);
+  return attempt(async () => {
+    const ids = await pendingApprovalIdsForInvoice(userId, invoiceId);
+    let done = 0;
+    try {
+      for (const id of ids) {
+        await approveMessage(userId, id, systemClock);
+        done += 1;
+      }
+    } catch (err) {
+      // Some may already be approved: refresh the app so the page shows what changed.
+      if (done > 0) revalidatePath("/", "layout");
+      if (done === 0) throw err;
+      throw new InvalidStateError(`Approved ${done} of ${ids.length}. ${describeError(err)}`);
+    }
+    if (ids.length === 0) return "Nothing on this invoice was waiting for approval.";
+    return ids.length === 1
+      ? "Approved 1 reminder. It goes out in the next send window."
+      : `Approved ${ids.length} reminders. Each goes out at its planned time.`;
   });
 }
 

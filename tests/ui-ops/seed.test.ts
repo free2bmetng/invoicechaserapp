@@ -105,7 +105,8 @@ describe("demo seed", () => {
 
   it("shows every queue state: approvals, a failed send, a delivery check, a reply, a bounce and a disputed invoice", async () => {
     const view = await loadNeedsYou(second.userId);
-    expect(view.sections.map((s) => s.kind)).toEqual(["approval", "failed", "needs_check", "reply", "bounce", "disputed"]);
+    // DESIGN_V2 urgency order: what broke first, then decisions, then information.
+    expect(view.sections.map((s) => s.kind)).toEqual(["failed", "needs_check", "bounce", "approval", "reply", "disputed"]);
   });
 
   it("has the reminder statuses the schedule and message log need", async () => {
