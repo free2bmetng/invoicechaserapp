@@ -28,6 +28,12 @@ export async function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[256px_minmax(0,1fr)]">
+      <a
+        href="#main"
+        className="fixed top-3 left-3 z-50 -translate-y-[200%] rounded-[10px] bg-surface px-4 py-3 text-[14px] font-medium text-ink focus:translate-y-0 focus:shadow-pop"
+      >
+        Skip to content
+      </a>
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh flex-col border-r border-line bg-surface/80 px-4 py-6 backdrop-blur lg:flex">
         <Brand />
@@ -41,7 +47,11 @@ export async function Shell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-surface/90 px-4 py-3 backdrop-blur lg:hidden">
         <Brand />
         <details className="group relative">
-          <summary className="flex h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] border border-line-strong bg-surface px-3 text-[14px] font-medium text-ink marker:hidden [&::-webkit-details-marker]:hidden">
+          <summary className="flex h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] border border-line-strong bg-surface px-3 text-[14px] font-medium text-ink shadow-card transition-colors hover:bg-surface-2 group-open:bg-surface-2 marker:hidden [&::-webkit-details-marker]:hidden">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" className="text-ink-2">
+              <path d="M4 7h16M4 12h16M4 17h16" className="group-open:hidden" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <path d="M6 6l12 12M18 6 6 18" className="hidden group-open:block" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
             Menu
             {needsYouCount ? (
               <span className="num grid h-5 min-w-5 place-items-center rounded-full bg-warn px-1.5 text-[11px] font-semibold text-surface">
@@ -58,7 +68,7 @@ export async function Shell({ children }: { children: React.ReactNode }) {
         </details>
       </header>
 
-      <main id="main" className="mx-auto w-full max-w-6xl px-4 pb-16 pt-8 sm:px-6 lg:px-10 lg:pt-10">
+      <main id="main" tabIndex={-1} className="mx-auto focus:outline-none w-full max-w-6xl px-4 pb-16 pt-8 sm:px-6 lg:px-10 lg:pt-10">
         {showPasskeyOffer ? <PasskeyOffer /> : null}
         {children}
       </main>

@@ -10,11 +10,13 @@
   --bg: #f6f5f1;
   --surface: #ffffff;
   --surface-2: #efede7;
+  --surface-3: #e6e3db;
   --ink: #17171a;
   --ink-2: #4f4f57;
-  --ink-3: #6b6b74;
+  --ink-3: #65656e;
   --line: #e3e0d7;
   --line-strong: #cfcbbf;
+  --control-border: #85817a;
   --accent: #0c6553;
   --accent-hover: #09503f;
   --accent-soft: #dfefe9;
@@ -23,27 +25,37 @@
   --warn-soft: #fbf1de;
   --danger: #b42318;
   --danger-soft: #fdeceb;
+  --danger-hover: #951b12;
+  --danger-ink: #ffffff;
   --ok: #05703f;
   --ok-soft: #e3f3ea;
   --info: #2a5caa;
   --info-soft: #e6eefb;
-  --focus: #2563eb;
+  --neutral-fill: #85817a;
+  --warn-fill: #b87508;
+  --danger-fill: #d0392d;
+  --ok-fill: #16865a;
+  --info-fill: #3b6fc4;
+  --focus: #0c6553;
   --elev-card: 0 1px 1px rgb(23 23 26 / 0.04), 0 1px 2px rgb(23 23 26 / 0.04);
   --elev-pop: 0 18px 40px -18px rgb(23 23 26 / 0.28), 0 2px 6px rgb(23 23 26 / 0.06);
   --grain: 0.035;
 }
 
+/* Dark mode layers bg < surface < surface-2 < surface-3, each a visible step. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0f1113;
-    --surface: #161a1d;
-    --surface-2: #1d2226;
+    --bg: #0b0d0f;
+    --surface: #14181b;
+    --surface-2: #1b2024;
+    --surface-3: #242a2f;
     --ink: #f2f1ee;
     --ink-2: #b9bcc2;
-    --ink-3: #9598a0;
-    --line: #272d32;
-    --line-strong: #373e44;
+    --ink-3: #979ba3;
+    --line: #262c31;
+    --line-strong: #3a4248;
+    --control-border: #737b84;
     --accent: #3fb896;
     --accent-hover: #5ccaa9;
     --accent-soft: #15322a;
@@ -52,27 +64,37 @@
     --warn-soft: #3a2a10;
     --danger: #ff8a80;
     --danger-soft: #3b1816;
+    --danger-hover: #ffa79f;
+    --danger-ink: #2b0b08;
+  --danger-ink: #2b0b08;
     --ok: #5ed39a;
     --ok-soft: #123524;
     --info: #8fb4ff;
     --info-soft: #172a4a;
-    --focus: #7aa7ff;
-    --elev-card: 0 1px 1px rgb(0 0 0 / 0.3);
-    --elev-pop: 0 18px 40px -18px rgb(0 0 0 / 0.7);
+    --neutral-fill: #7a828b;
+    --warn-fill: #e0a03c;
+    --danger-fill: #f0675c;
+    --ok-fill: #3fbf82;
+    --info-fill: #6f9bf0;
+    --focus: #3fb896;
+    --elev-card: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.03);
+    --elev-pop: 0 18px 40px -18px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04);
     --grain: 0.05;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f1113;
-  --surface: #161a1d;
-  --surface-2: #1d2226;
+  --bg: #0b0d0f;
+  --surface: #14181b;
+  --surface-2: #1b2024;
+  --surface-3: #242a2f;
   --ink: #f2f1ee;
   --ink-2: #b9bcc2;
-  --ink-3: #9598a0;
-  --line: #272d32;
-  --line-strong: #373e44;
+  --ink-3: #979ba3;
+  --line: #262c31;
+  --line-strong: #3a4248;
+  --control-border: #737b84;
   --accent: #3fb896;
   --accent-hover: #5ccaa9;
   --accent-soft: #15322a;
@@ -81,13 +103,20 @@
   --warn-soft: #3a2a10;
   --danger: #ff8a80;
   --danger-soft: #3b1816;
+  --danger-hover: #ffa79f;
+  --danger-ink: #2b0b08;
   --ok: #5ed39a;
   --ok-soft: #123524;
   --info: #8fb4ff;
   --info-soft: #172a4a;
-  --focus: #7aa7ff;
-  --elev-card: 0 1px 1px rgb(0 0 0 / 0.3);
-  --elev-pop: 0 18px 40px -18px rgb(0 0 0 / 0.7);
+  --neutral-fill: #7a828b;
+  --warn-fill: #e0a03c;
+  --danger-fill: #f0675c;
+  --ok-fill: #3fbf82;
+  --info-fill: #6f9bf0;
+  --focus: #3fb896;
+  --elev-card: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --elev-pop: 0 18px 40px -18px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04);
   --grain: 0.05;
 }
 
@@ -97,11 +126,13 @@
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+  --color-control-border: var(--control-border);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
@@ -110,16 +141,50 @@
   --color-warn-soft: var(--warn-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-ink: var(--danger-ink);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
+  --color-neutral-fill: var(--neutral-fill);
+  --color-warn-fill: var(--warn-fill);
+  --color-danger-fill: var(--danger-fill);
+  --color-ok-fill: var(--ok-fill);
+  --color-info-fill: var(--info-fill);
+  --color-focus: var(--focus);
   --shadow-card: var(--elev-card);
   --shadow-pop: var(--elev-pop);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 20px;
+}
+
+/* Type scale. Use these instead of ad-hoc pixel sizes:
+   text-page-title 28/32 · text-section-title 18/24 semibold · text-card-title 15/22 semibold
+   text-body 14/22 · text-small 13/20 · text-stat 30/36 semibold (KPI values).
+   Add `num` wherever money or counts appear (tabular numerals). */
+@theme {
+  --text-page-title: 28px;
+  --text-page-title--line-height: 32px;
+  --text-page-title--font-weight: 600;
+  --text-page-title--letter-spacing: -0.02em;
+  --text-section-title: 18px;
+  --text-section-title--line-height: 24px;
+  --text-section-title--font-weight: 600;
+  --text-section-title--letter-spacing: -0.01em;
+  --text-card-title: 15px;
+  --text-card-title--line-height: 22px;
+  --text-card-title--font-weight: 600;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-small: 13px;
+  --text-small--line-height: 20px;
+  --text-stat: 30px;
+  --text-stat--line-height: 36px;
+  --text-stat--font-weight: 600;
+  --text-stat--letter-spacing: -0.02em;
 }
 
 /* ───────────────────────── Base ───────────────────────── */
@@ -153,10 +218,33 @@ body::before {
   z-index: 1;
 }
 
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: 6px;
+/* Focus ring: the accent (>= 3:1 on every surface), 2px wide, 2px offset. In the base
+   layer so a component can replace it with a utility (stretched row links do). */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
+/* Whole-row links (Tr with href, ActionRow with href) stretch one anchor over the row.
+   Other controls in the row sit above that anchor so they stay clickable. */
+/* ActionList: every ActionRow shares one column grid on desktop, so amounts,
+   statuses and actions line up even when rows carry different buttons. */
+@media (width >= 40rem) {
+  [data-action-list] {
+    display: grid;
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) auto auto auto;
+  }
+  [data-action-list] > [data-action-row] {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+}
+
+[data-row-link] :is(a, button, input, select, textarea, label, summary, [tabindex]):not([data-row-anchor]) {
+  position: relative;
+  z-index: 1;
 }
 
 ::selection {

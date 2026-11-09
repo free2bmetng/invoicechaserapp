@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import type { ComponentPropsWithRef, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -6,34 +6,42 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
+// One style per role. 44px tall on phone (touch target); 40px (md) / 32px (sm) from sm up.
+// Focus uses the global ring: accent, 2px, 2px offset.
 const buttonBase =
   "lift inline-flex items-center justify-center gap-2 rounded-[10px] font-medium select-none whitespace-nowrap " +
   "disabled:opacity-50 disabled:pointer-events-none active:translate-y-px";
 
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-accent-ink shadow-[0_1px_0_rgb(255_255_255/0.18)_inset,0_1px_2px_rgb(0_0_0/0.12)] hover:bg-accent-hover",
-  secondary: "bg-surface text-ink border border-line-strong hover:border-ink-3 hover:bg-surface-2 shadow-card",
+  // The one main action on a page.
+  primary:
+    "bg-accent text-accent-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.16),0_1px_2px_rgb(0_0_0/0.14)] hover:bg-accent-hover",
+  // Everything else that matters.
+  secondary: "bg-surface text-ink border border-line-strong shadow-card hover:border-control-border hover:bg-surface-2",
+  // Quiet actions: Cancel, tertiary links that look like buttons.
   ghost: "text-ink-2 hover:text-ink hover:bg-surface-2",
-  danger: "bg-danger-soft text-danger border border-danger/30 hover:border-danger/60",
+  // Filled red. Only for the confirm step of a destructive action.
+  danger:
+    "bg-danger text-danger-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.12),0_1px_2px_rgb(0_0_0/0.14)] hover:bg-danger-hover",
 };
+
+const buttonSizes = {
+  sm: "h-11 px-3 text-[13px] sm:h-8 sm:rounded-[8px] sm:px-2.5",
+  md: "h-11 px-4 text-[14px] sm:h-10",
+} as const;
+
+// Shared classes so a <Link> can look like a button: <Link className={buttonClass("primary")}>.
+export function buttonClass(variant: ButtonVariant = "secondary", size: "sm" | "md" = "md"): string {
+  return cx(buttonBase, buttonSizes[size], buttonVariants[variant]);
+}
 
 export function Button({
   variant = "secondary",
   size = "md",
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" }) {
-  return (
-    <button
-      {...props}
-      className={cx(
-        buttonBase,
-        size === "sm" ? "h-11 px-3 text-[13px]" : "h-11 px-4 text-sm",
-        buttonVariants[variant],
-        className,
-      )}
-    />
-  );
+}: ComponentPropsWithRef<"button"> & { variant?: ButtonVariant; size?: "sm" | "md" }) {
+  return <button {...props} className={cx(buttonClass(variant, size), className)} />;
 }
 
 export type Tone = "neutral" | "accent" | "warn" | "danger" | "ok" | "info";
@@ -94,21 +102,32 @@ export function Field({
   );
 }
 
+// Inputs use the global focus ring (accent, 2px offset) plus an accent border.
 const inputClass =
   "w-full h-11 rounded-[10px] border border-line-strong bg-surface px-3 text-[14px] text-ink placeholder:text-ink-3 " +
-  "transition-[border-color,box-shadow] duration-150 hover:border-ink-3 focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/20 " +
-  "aria-[invalid=true]:border-danger aria-[invalid=true]:ring-danger/15";
+  "transition-[border-color,box-shadow] duration-150 hover:border-control-border focus:border-accent " +
+  "disabled:opacity-60 disabled:bg-surface-2 aria-[invalid=true]:border-danger";
 
-export function TextInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={cx(inputClass, className)} />;
+// Field widths. Never a 1,000px input: text fields cap at max-w-md, short values
+// (amounts, dates, codes) at max-w-xs. Use "full" only inside a narrow column.
+export type FieldWidth = "text" | "short" | "full";
+const fieldWidth: Record<FieldWidth, string> = { text: "max-w-md", short: "max-w-xs", full: "" };
+
+export function TextInput({ className, width = "text", ...props }: InputHTMLAttributes<HTMLInputElement> & { width?: FieldWidth }) {
+  return <input {...props} className={cx(inputClass, fieldWidth[width], className)} />;
 }
 
-export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+export function Select({
+  className,
+  children,
+  width = "text",
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement> & { width?: FieldWidth }) {
   return (
-    <select {...props} className={cx(inputClass, "pr-8 appearance-none bg-no-repeat", className)}
+    <select {...props} className={cx(inputClass, "pr-9 appearance-none bg-no-repeat", fieldWidth[width], className)}
       style={{
         backgroundImage:
-          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1.5l5 5 5-5' fill='none' stroke='%236b6b74' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>\")",
+          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1.5l5 5 5-5' fill='none' stroke='%23858179' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>\")",
         backgroundPosition: "right 12px center",
       }}
     >
@@ -117,16 +136,19 @@ export function Select({ className, children, ...props }: SelectHTMLAttributes<H
   );
 }
 
+// Message bodies get more room (max-w-2xl) but still a readable measure.
 export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
       {...props}
-      className={cx(inputClass, "h-auto min-h-[120px] py-2.5 leading-6 resize-y", className)}
+      className={cx(inputClass, "h-auto min-h-[120px] max-w-2xl py-2.5 leading-6 resize-y", className)}
     />
   );
 }
 
 // Accessible on/off switch that also works in a plain HTML form (name + value).
+// The whole label row (min 44px) toggles it. The off-state outline uses
+// --control-border (>= 3:1 on surface and bg, light and dark).
 export function Switch({
   name,
   defaultChecked,
@@ -135,6 +157,7 @@ export function Switch({
   label,
   description,
   id,
+  disabled,
 }: {
   name?: string;
   defaultChecked?: boolean;
@@ -143,14 +166,24 @@ export function Switch({
   label: string;
   description?: string;
   id: string;
+  disabled?: boolean;
 }) {
+  const descId = description ? `${id}-desc` : undefined;
   return (
-    <div className="flex items-start justify-between gap-6 py-3">
+    <div className="relative flex min-h-11 items-center justify-between gap-6 py-2.5">
       <div className="min-w-0">
-        <label htmlFor={id} className="text-[14px] font-medium text-ink">
+        {/* Stretched over the row: a click anywhere on it toggles the switch. */}
+        <label
+          htmlFor={id}
+          className={cx("text-[14px] leading-[22px] font-medium text-ink after:absolute after:inset-0 after:content-['']", disabled ? "after:cursor-not-allowed" : "after:cursor-pointer")}
+        >
           {label}
         </label>
-        {description ? <p className="mt-0.5 text-[13px] leading-5 text-ink-3">{description}</p> : null}
+        {description ? (
+          <p id={descId} className="mt-0.5 text-small text-ink-3">
+            {description}
+          </p>
+        ) : null}
       </div>
       <span className="relative inline-flex h-6 w-11 shrink-0">
         <input
@@ -158,18 +191,20 @@ export function Switch({
           name={name}
           type="checkbox"
           role="switch"
+          disabled={disabled}
           defaultChecked={defaultChecked}
           checked={checked}
+          aria-describedby={descId}
           onChange={(e) => onChange?.(e.currentTarget.checked)}
-          className="peer absolute inset-0 z-10 m-0 h-full w-full cursor-pointer opacity-0"
+          className="peer absolute -inset-2.5 z-10 m-0 cursor-pointer opacity-0 focus-visible:outline-none disabled:cursor-not-allowed"
         />
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 rounded-full border border-line-strong bg-surface-2 transition-colors duration-200 peer-checked:border-accent peer-checked:bg-accent peer-focus-visible:ring-[3px] peer-focus-visible:ring-accent/25"
+          className="pointer-events-none absolute inset-0 rounded-full border border-control-border bg-surface-2 transition-colors duration-200 peer-checked:border-accent peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-solid peer-focus-visible:outline-focus peer-disabled:opacity-50"
         />
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute top-[3px] left-[3px] h-[18px] w-[18px] rounded-full bg-surface shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-200 ease-out peer-checked:translate-x-5"
+          className="pointer-events-none absolute top-[4px] left-[4px] size-4 rounded-full bg-control-border transition-[transform,background-color] duration-200 ease-out peer-checked:translate-x-5 peer-checked:bg-accent-ink peer-checked:shadow-[0_1px_2px_rgb(0_0_0/0.25)]"
         />
       </span>
     </div>
@@ -191,8 +226,8 @@ export function PageHeader({
     <header className="flex flex-col gap-4 border-b border-line pb-6 md:flex-row md:items-end md:justify-between">
       <div className="min-w-0">
         {eyebrow ? <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ink-3">{eyebrow}</p> : null}
-        <h1 className="mt-1 text-[28px] leading-9 font-semibold tracking-[-0.02em] text-ink md:text-[32px] md:leading-10">{title}</h1>
-        {description ? <p className="mt-2 max-w-2xl text-[15px] leading-6 text-ink-2">{description}</p> : null}
+        <h1 className="mt-1 text-page-title text-ink">{title}</h1>
+        {description ? <p className="mt-2 max-w-2xl text-body text-ink-2">{description}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
@@ -223,6 +258,60 @@ export function EmptyState({
       <h2 className="text-[16px] font-semibold text-ink">{title}</h2>
       <p className="max-w-sm text-[14px] leading-6 text-ink-2">{body}</p>
       {action ? <div className="mt-2">{action}</div> : null}
+    </div>
+  );
+}
+
+// Full-page state (error, not found). Centred, calm, one way forward as the primary action.
+export function StatePanel({
+  code,
+  title,
+  body,
+  actions,
+  detail,
+  tone = "neutral",
+  headingRef,
+}: {
+  code?: string;
+  title: string;
+  body: ReactNode;
+  actions: ReactNode;
+  detail?: ReactNode;
+  tone?: "neutral" | "danger";
+  headingRef?: React.Ref<HTMLHeadingElement>;
+}) {
+  return (
+    <div className="flex min-h-[60dvh] items-center justify-center px-4 py-16">
+      <div className="w-full max-w-md text-center">
+        <div
+          aria-hidden="true"
+          className={cx(
+            "mx-auto grid size-12 place-items-center rounded-[14px] border",
+            tone === "danger" ? "border-danger/25 bg-danger-soft text-danger" : "border-line bg-surface-2 text-ink-2",
+          )}
+        >
+          {tone === "danger" ? (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M12 8v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <circle cx="12" cy="16.5" r="1.1" fill="currentColor" />
+              <path d="M10.3 3.9 2.6 17.4A2 2 0 0 0 4.3 20.4h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+            </svg>
+          ) : (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.7" />
+              <path d="m16 16 4.5 4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              <path d="M8.8 11h4.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          )}
+        </div>
+        {code ? <p className="num mt-5 text-small font-medium text-ink-3">{code}</p> : null}
+        <h1 ref={headingRef} tabIndex={-1} className={cx("text-page-title text-ink focus:outline-none", code ? "mt-1" : "mt-5")}>
+          {title}
+        </h1>
+        <div className="mx-auto mt-3 max-w-sm text-body text-ink-2">{body}</div>
+        <div className="mt-7 flex flex-col-reverse items-stretch justify-center gap-2 sm:flex-row sm:items-center">{actions}</div>
+        {detail ? <div className="mt-8 text-small text-ink-3">{detail}</div> : null}
+      </div>
     </div>
   );
 }
