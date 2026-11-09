@@ -8,9 +8,11 @@ import { redirect } from "next/navigation";
 import { DateTime } from "luxon";
 import { systemClock } from "@/lib/clock";
 import {
+  addInvoiceNote,
   createClient,
   createInvoice,
   getInvoiceDetail,
+  recordPayment,
   setInvoiceContacts,
   setInvoiceStatus,
   setPaymentPlan,
@@ -19,7 +21,8 @@ import {
   type PlanInstallmentInput,
 } from "@/lib/engine";
 import type { InvoiceStatus } from "@/lib/types";
-import { isKnownCurrency, normalizeCurrency, parseMoneyToMinor } from "@/lib/money";
+import { isKnownCurrency, normalizeCurrency } from "@/lib/money";
+import { parseTypedMoney } from "@/components/invoices/money-input";
 import { describeEngineError, listClientChoices, listStandardSequenceChoices, type ClientChoice } from "@/lib/queries/invoices";
 import { requireUserId } from "@/lib/session";
 import { failedState, isUuidText, readText, readTexts, valuesFrom, type FormState } from "@/components/invoices/form-state";
@@ -66,7 +69,8 @@ function checkInvoiceFields(formData: FormData, sequenceIds: Set<string>, errors
     errors.amount = "Enter the amount.";
   } else if (currencyKnown) {
     try {
-      amountMinor = parseMoneyToMinor(amountText, currency);
+      // People type "1,234.50". The strict parser takes "1234.50", so the form layer normalises first.
+      amountMinor = parseTypedMoney(amountText, currency);
       if (amountMinor <= 0) errors.amount = "The amount must be greater than zero.";
     } catch (err) {
       errors.amount = err instanceof Error ? err.message : "Enter a valid amount.";
@@ -246,8 +250,12 @@ export async function setInvoiceStatusAction(_previous: FormState, formData: For
   const status = readText(formData, "status").trim();
   if (!isUuidText(invoiceId)) return failedState(BAD_INVOICE, {}, {});
   if (!(STATUS_CHOICES as readonly string[]).includes(status)) return failedState("Choose a status from the list.", {}, {});
+  // Marking an invoice disputed can carry the client's reason, saved as a note in the timeline.
+  const note = status === "disputed" ? readText(formData, "note").trim() : "";
+  if (note.length > 2000) return failedState("Keep the reason under 2,000 characters.", { note: "Use 2,000 characters or fewer." }, { note });
   try {
     await setInvoiceStatus(userId, invoiceId, status as InvoiceStatus, systemClock);
+    if (note) await addInvoiceNote(userId, invoiceId, note, systemClock);
   } catch (err) {
     return failedState(describeEngineError(err), {}, {});
   }
@@ -258,6 +266,39 @@ export async function setInvoiceStatusAction(_previous: FormState, formData: For
     fieldErrors: {},
     values: {},
   };
+}
+
+// Records one installment of a payment plan as paid, by hand. When it is the last open one,
+// the engine marks the whole invoice paid.
+export async function recordInstallmentAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const userId = await requireUserId();
+  const invoiceId = readText(formData, "invoiceId").trim();
+  const installmentId = readText(formData, "installmentId").trim();
+  if (!isUuidText(invoiceId) || !isUuidText(installmentId)) return failedState(BAD_INVOICE, {}, {});
+  try {
+    await recordPayment({ userId, invoiceId, installmentId, paidAt: systemClock.now(), source: "manual", clock: systemClock });
+  } catch (err) {
+    return failedState(describeEngineError(err), {}, {});
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Installment recorded as paid. Its reminders are cancelled.", fieldErrors: {}, values: {} };
+}
+
+// Adds a note to the invoice's activity timeline: a dispute reason, a call, a promise to pay.
+export async function addInvoiceNoteAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const userId = await requireUserId();
+  const invoiceId = readText(formData, "invoiceId").trim();
+  const note = readText(formData, "note");
+  if (!isUuidText(invoiceId)) return failedState(BAD_INVOICE, {}, { note });
+  if (note.trim() === "") return failedState(null, { note: "Write the note first." }, { note });
+  if (note.trim().length > 2000) return failedState(null, { note: "Use 2,000 characters or fewer." }, { note });
+  try {
+    await addInvoiceNote(userId, invoiceId, note, systemClock);
+  } catch (err) {
+    return failedState(describeEngineError(err), {}, { note });
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Note added.", fieldErrors: {}, values: {} };
 }
 
 export async function setInvoiceContactsAction(_previous: FormState, formData: FormData): Promise<FormState> {
@@ -310,7 +351,7 @@ export async function setPaymentPlanAction(_previous: FormState, formData: FormD
     if (!isoDateOk(date)) errors[`installmentDate_${i}`] = "Enter a real date.";
     let amountMinor = 0;
     try {
-      amountMinor = parseMoneyToMinor(amountText, currency);
+      amountMinor = parseTypedMoney(amountText, currency);
       if (amountMinor <= 0) errors[`installmentAmount_${i}`] = "Enter an amount greater than zero.";
     } catch (err) {
       errors[`installmentAmount_${i}`] = err instanceof Error ? err.message : "Enter a valid amount.";

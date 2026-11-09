@@ -5,7 +5,7 @@ import { Badge, type Tone } from "./ui";
 // info = neutral information only, neutral = waiting or closed. Scheduled is neutral.
 // Plain-language labels. Users read these daily, so they say what happens next, not what the row is.
 export const INVOICE_STATUS_META: Record<InvoiceStatus, { label: string; tone: Tone; help: string }> = {
-  open: { label: "Open", tone: "info", help: "Reminders are scheduled." },
+  open: { label: "Open", tone: "neutral", help: "Reminders are scheduled." },
   paid: { label: "Paid", tone: "ok", help: "Remaining reminders are cancelled." },
   paused: { label: "Paused", tone: "neutral", help: "Nothing is sent until you resume." },
   disputed: { label: "Disputed", tone: "warn", help: "Nothing is sent while this is disputed." },

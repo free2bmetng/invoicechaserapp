@@ -1,11 +1,17 @@
 "use client";
 
-import { useActionState, useState } from "react";
+// The payment-plan editor, shown inside the "Payment plan" EditableSection. Rows of date and
+// amount (the currency is shown on every amount), a running total, Save and Cancel.
+// It closes itself after a successful save.
+import { useActionState, useEffect, useState } from "react";
 import { setPaymentPlanAction } from "@/app/actions/invoices";
-import { Button, Field, TextInput } from "@/components/ui";
-import { parseMoneyToMinor, formatMoney } from "@/lib/money";
+import { useEditableSection } from "@/components/data";
+import { Button, TextInput } from "@/components/ui";
+import { formatMoney } from "@/lib/money";
 import { IDLE_FORM_STATE } from "./form-state";
-import { addDaysIso, dueDateLabel, minorToInput } from "./format";
+import { addDaysIso, minorToInput } from "./format";
+import { AmountInput } from "./amount-input";
+import { formatMoneyInput, parseTypedMoney } from "./money-input";
 
 const MAX_ROWS = 60;
 
@@ -16,6 +22,7 @@ export interface InstallmentInputRow {
 }
 
 interface Row {
+  key: number;
   date: string;
   amount: string;
 }
@@ -24,8 +31,8 @@ interface Row {
 function defaultRows(totalMinor: number, currency: string, dueDate: string): Row[] {
   const first = Math.floor(totalMinor / 2);
   return [
-    { date: dueDate, amount: minorToInput(first, currency) },
-    { date: addDaysIso(dueDate, 30), amount: minorToInput(totalMinor - first, currency) },
+    { key: 0, date: dueDate, amount: formatMoneyInput(minorToInput(first, currency), currency) },
+    { key: 1, date: addDaysIso(dueDate, 30), amount: formatMoneyInput(minorToInput(totalMinor - first, currency), currency) },
   ];
 }
 
@@ -35,115 +42,119 @@ export function PaymentPlanPanel({
   totalMinor,
   dueDate,
   existing,
-  lockedReason,
 }: {
   invoiceId: string;
   currency: string;
   totalMinor: number;
   dueDate: string;
   existing: InstallmentInputRow[];
-  lockedReason: string | null;
 }) {
   const [state, formAction, pending] = useActionState(setPaymentPlanAction, IDLE_FORM_STATE);
+  const section = useEditableSection();
   const [rows, setRows] = useState<Row[]>(() =>
     existing.length > 0
-      ? existing.map((i) => ({ date: i.dueDate, amount: minorToInput(i.amountMinor, currency) }))
+      ? existing.map((i, index) => ({ key: index, date: i.dueDate, amount: formatMoneyInput(minorToInput(i.amountMinor, currency), currency) }))
       : defaultRows(totalMinor, currency, dueDate),
   );
+  const [nextKey, setNextKey] = useState(rows.length);
 
-  if (lockedReason) {
-    return (
-      <div className="grid gap-4">
-        <p className="text-[14px] leading-6 text-ink-2">{lockedReason}</p>
-        {existing.length > 0 ? (
-          <ol className="grid gap-2">
-            {existing.map((i, index) => (
-              <li key={`${i.dueDate}-${index}`} className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5 text-[14px]">
-                <span className="text-ink-2">Installment {index + 1} · {dueDateLabel(i.dueDate)}</span>
-                <span className="num font-medium text-ink">
-                  {formatMoney(i.amountMinor, currency)} {i.status === "paid" ? <span className="ml-2 text-[12px] font-semibold text-ok">Paid</span> : null}
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : null}
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (state.ok) section?.close();
+  }, [state, section]);
 
-  // The running total, so the user sees the gap before submitting. The engine has the final say.
+  // The running total, so the user sees the gap before saving. The engine has the final say.
   let allocated = 0;
   let unreadable = false;
   for (const row of rows) {
     try {
-      allocated += parseMoneyToMinor(row.amount, currency);
+      allocated += parseTypedMoney(row.amount, currency);
     } catch {
       unreadable = true;
     }
   }
   const difference = totalMinor - allocated;
-  const totalText = formatMoney(totalMinor, currency);
-  const allocatedText = formatMoney(allocated, currency);
 
-  function update(index: number, patch: Partial<Row>) {
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  function update(key: number, patch: Partial<Row>) {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
   return (
-    <form action={formAction} className="grid gap-5" noValidate>
+    <form action={formAction} className="grid gap-4" noValidate>
       <input type="hidden" name="invoiceId" value={invoiceId} />
       <input type="hidden" name="installmentCount" value={rows.length} />
 
-      <ol className="grid gap-3" aria-label="Installments">
+      <div className="grid gap-2" role="group" aria-label="Installments">
+        <div aria-hidden="true" className="hidden grid-cols-[2rem_minmax(0,11rem)_minmax(0,12rem)_2.75rem] gap-3 text-small text-ink-3 sm:grid">
+          <span>#</span>
+          <span>Due date</span>
+          <span>Amount</span>
+          <span />
+        </div>
         {rows.map((row, index) => {
           const dateError = state.fieldErrors[`installmentDate_${index}`];
           const amountError = state.fieldErrors[`installmentAmount_${index}`];
           return (
-            <li key={index} className="grid gap-3 rounded-[var(--radius-md)] border border-line bg-surface p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-              <Field id={`installmentDate_${index}`} label={`Installment ${index + 1} date`} error={dateError}>
-                <TextInput id={`installmentDate_${index}`} name={`installmentDate_${index}`} type="date" value={row.date}
-                  onChange={(e) => update(index, { date: e.currentTarget.value })} aria-invalid={dateError ? true : undefined} />
-              </Field>
-              <Field id={`installmentAmount_${index}`} label={`Installment ${index + 1} amount`} error={amountError}>
-                <TextInput id={`installmentAmount_${index}`} name={`installmentAmount_${index}`} inputMode="decimal" value={row.amount}
-                  onChange={(e) => update(index, { amount: e.currentTarget.value })} aria-invalid={amountError ? true : undefined} className="num" />
-              </Field>
-              <Button type="button" variant="ghost" size="sm" disabled={rows.length <= 2}
-                onClick={() => setRows((prev) => prev.filter((_, i) => i !== index))}
-                aria-label={`Remove installment ${index + 1}`}>
-                Remove
-              </Button>
-            </li>
+            <div key={row.key} className="grid grid-cols-[2rem_minmax(0,1fr)_2.75rem] items-start gap-x-3 gap-y-2 sm:grid-cols-[2rem_minmax(0,11rem)_minmax(0,12rem)_2.75rem]">
+              <span className="num pt-3 text-body font-medium text-ink-3">{index + 1}</span>
+              <div className="grid gap-1">
+                <label htmlFor={`installmentDate_${index}`} className="sr-only">Installment {index + 1} due date</label>
+                <TextInput id={`installmentDate_${index}`} name={`installmentDate_${index}`} type="date" value={row.date} width="full"
+                  onChange={(e) => update(row.key, { date: e.currentTarget.value })} aria-invalid={dateError ? true : undefined} />
+                {dateError ? <p role="alert" className="text-[12.5px] text-danger">{dateError}</p> : null}
+              </div>
+              <div className="col-start-2 row-start-2 grid gap-1 sm:col-start-3 sm:row-start-1">
+                <label htmlFor={`installmentAmount_${index}`} className="sr-only">Installment {index + 1} amount in {currency}</label>
+                <div className="relative">
+                  <span aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-small font-medium text-ink-3">{currency}</span>
+                  <AmountInput id={`installmentAmount_${index}`} name={`installmentAmount_${index}`} value={row.amount} currency={currency}
+                    onValueChange={(value) => update(row.key, { amount: value })} aria-invalid={amountError ? true : undefined} className="pl-12 text-right" />
+                </div>
+                {amountError ? <p role="alert" className="text-[12.5px] text-danger">{amountError}</p> : null}
+              </div>
+              <button
+                type="button"
+                disabled={rows.length <= 2}
+                onClick={() => setRows((prev) => prev.filter((r) => r.key !== row.key))}
+                aria-label={`Remove installment ${index + 1}`}
+                title={rows.length <= 2 ? "A plan needs at least two installments" : `Remove installment ${index + 1}`}
+                className="col-start-3 row-start-1 grid size-11 place-items-center rounded-[10px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-danger disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-3 sm:col-start-4"
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
           );
         })}
-      </ol>
+      </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button type="button" variant="secondary" size="sm" disabled={rows.length >= MAX_ROWS}
-          onClick={() =>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+        <Button type="button" variant="ghost" size="sm" disabled={rows.length >= MAX_ROWS}
+          onClick={() => {
             setRows((prev) => {
               const last = prev[prev.length - 1];
-              return [...prev, { date: last ? addDaysIso(last.date, 30) : dueDate, amount: "" }];
-            })
-          }>
-          Add installment
+              return [...prev, { key: nextKey, date: last ? addDaysIso(last.date, 30) : dueDate, amount: "" }];
+            });
+            setNextKey((k) => k + 1);
+          }}>
+          + Add installment
         </Button>
-        <p role="status" className={`num text-[13px] ${!unreadable && difference === 0 ? "text-ok" : "text-ink-2"}`}>
+        <p role="status" className={`num text-small ${!unreadable && difference === 0 ? "font-medium text-ok" : difference < 0 ? "text-danger" : "text-ink-2"}`}>
           {unreadable
             ? "Check the amounts."
             : difference === 0
-              ? `Installments add up to ${totalText}.`
-              : `${allocatedText} of ${totalText} allocated${difference > 0 ? `, ${formatMoney(difference, currency)} to go` : `, ${formatMoney(-difference, currency)} too many`}.`}
+              ? `Adds up to ${formatMoney(totalMinor, currency)}`
+              : difference > 0
+                ? `${formatMoney(difference, currency)} left to allocate`
+                : `${formatMoney(-difference, currency)} more than the invoice`}
         </p>
       </div>
 
-      {state.ok === false && state.message ? (
-        <p role="alert" className="text-[13px] text-danger">{state.message}</p>
-      ) : null}
-      {state.ok === true && state.message ? <p role="status" className="text-[13px] text-ink-2">{state.message}</p> : null}
+      {state.ok === false && state.message ? <p role="alert" className="text-small text-danger">{state.message}</p> : null}
 
-      <div>
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="primary" disabled={pending}>{pending ? "Saving…" : "Save payment plan"}</Button>
+        <Button type="button" variant="ghost" data-edit-cancel>Cancel</Button>
       </div>
     </form>
   );

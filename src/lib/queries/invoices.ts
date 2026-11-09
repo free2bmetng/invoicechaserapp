@@ -234,3 +234,128 @@ export async function pendingApprovalCount(userId: string): Promise<number> {
     return Number(rows[0]?.n ?? 0);
   });
 }
+
+export interface ClientInvoiceDefaults {
+  currency: string;
+  // Days from issue to due date on the client's most recent invoice.
+  termsDays: number;
+}
+
+// Per client, the currency and payment terms of their most recent invoice. The new-invoice form
+// defaults to these when a client is chosen, so a client billed in GBP gets GBP.
+export async function clientInvoiceDefaults(userId: string): Promise<Record<string, ClientInvoiceDefaults>> {
+  return withUser(userId, async (c) => {
+    const { rows } = await c.query<{ client_id: string; currency: string; terms: number }>(
+      `select distinct on (client_id) client_id, currency, (due_date - issue_date)::int as terms
+       from invoices where user_id = $1 order by client_id, created_at desc, id`,
+      [userId],
+    );
+    const out: Record<string, ClientInvoiceDefaults> = {};
+    for (const r of rows) out[r.client_id] = { currency: r.currency, termsDays: Math.max(0, Number(r.terms)) };
+    return out;
+  });
+}
+
+export interface ReceivablesSummary {
+  currency: string;
+  outstandingMinor: number;
+  outstandingCount: number;
+  overdueMinor: number;
+  overdueCount: number;
+  oldestOverdueDays: number;
+  dueSoonMinor: number;
+  dueSoonCount: number;
+  // Ageing of the outstanding money: not yet due, 1–30, 31–90 and over 90 days overdue.
+  buckets: { notDue: number; upTo30: number; upTo90: number; older: number };
+}
+
+// Outstanding money per currency, as payables: an invoice that is open, paused or disputed, or
+// each open installment of a payment plan. Ordered by how many invoices each currency has.
+export async function receivablesSummary(userId: string, today: string): Promise<ReceivablesSummary[]> {
+  return withUser(userId, async (c) => {
+    const { rows } = await c.query<Record<string, string>>(
+      `with payables as (
+         select i.id as invoice_id, i.currency, i.amount_minor as amount, i.due_date from invoices i
+          where i.user_id = $1 and i.status in ('open', 'paused', 'disputed')
+         union all
+         select p.invoice_id, p.currency, p.amount_minor, p.due_date from payment_plan_installments p
+           join invoices i on i.id = p.invoice_id and i.user_id = p.user_id
+          where p.user_id = $1 and i.status = 'payment_plan' and p.status = 'open'
+       )
+       select currency,
+         sum(amount)::text as outstanding,
+         count(distinct invoice_id)::text as outstanding_count,
+         coalesce(sum(amount) filter (where due_date < $2::date), 0)::text as overdue,
+         (count(distinct invoice_id) filter (where due_date < $2::date))::text as overdue_count,
+         coalesce(max($2::date - due_date) filter (where due_date < $2::date), 0)::text as oldest,
+         coalesce(sum(amount) filter (where due_date >= $2::date and due_date < $2::date + 7), 0)::text as due_soon,
+         (count(distinct invoice_id) filter (where due_date >= $2::date and due_date < $2::date + 7))::text as due_soon_count,
+         coalesce(sum(amount) filter (where due_date >= $2::date), 0)::text as b_not_due,
+         coalesce(sum(amount) filter (where due_date < $2::date and $2::date - due_date <= 30), 0)::text as b_30,
+         coalesce(sum(amount) filter (where $2::date - due_date between 31 and 90), 0)::text as b_90,
+         coalesce(sum(amount) filter (where $2::date - due_date > 90), 0)::text as b_older
+       from payables group by currency order by count(distinct invoice_id) desc, currency`,
+      [userId, today],
+    );
+    return rows.map((r) => ({
+      currency: r.currency,
+      outstandingMinor: Number(r.outstanding),
+      outstandingCount: Number(r.outstanding_count),
+      overdueMinor: Number(r.overdue),
+      overdueCount: Number(r.overdue_count),
+      oldestOverdueDays: Number(r.oldest),
+      dueSoonMinor: Number(r.due_soon),
+      dueSoonCount: Number(r.due_soon_count),
+      buckets: { notDue: Number(r.b_not_due), upTo30: Number(r.b_30), upTo90: Number(r.b_90), older: Number(r.b_older) },
+    }));
+  });
+}
+
+export interface PlanProgress {
+  paidMinor: number;
+  openMinor: number;
+  // The earliest open installment date, or null when every installment is paid.
+  nextDue: string | null;
+  paidCount: number;
+  count: number;
+}
+
+// Payment-plan progress per invoice: what is paid, what is left, and the next date.
+export async function planProgressByInvoice(userId: string, invoiceIds: readonly string[]): Promise<Map<string, PlanProgress>> {
+  const out = new Map<string, PlanProgress>();
+  if (invoiceIds.length === 0) return out;
+  return withUser(userId, async (c) => {
+    const { rows } = await c.query<{ invoice_id: string; paid: string; open: string; next_due: string | null; paid_count: string; n: string }>(
+      `select invoice_id,
+         coalesce(sum(amount_minor) filter (where status = 'paid'), 0)::text as paid,
+         coalesce(sum(amount_minor) filter (where status = 'open'), 0)::text as open,
+         (min(due_date) filter (where status = 'open'))::text as next_due,
+         (count(*) filter (where status = 'paid'))::text as paid_count,
+         count(*)::text as n
+       from payment_plan_installments where user_id = $1 and invoice_id = any($2::uuid[]) group by invoice_id`,
+      [userId, [...invoiceIds]],
+    );
+    for (const r of rows) {
+      out.set(r.invoice_id, {
+        paidMinor: Number(r.paid),
+        openMinor: Number(r.open),
+        nextDue: r.next_due,
+        paidCount: Number(r.paid_count),
+        count: Number(r.n),
+      });
+    }
+    return out;
+  });
+}
+
+// The invoice number and client name, for the browser tab title. Null when not found.
+export async function invoiceTitle(userId: string, invoiceId: string): Promise<{ number: string; client: string } | null> {
+  return withUser(userId, async (c) => {
+    const { rows } = await c.query<{ invoice_number: string; name: string }>(
+      `select i.invoice_number, cl.name from invoices i join clients cl on cl.id = i.client_id and cl.user_id = i.user_id
+       where i.id = $1 and i.user_id = $2`,
+      [invoiceId, userId],
+    );
+    return rows[0] ? { number: rows[0].invoice_number, client: rows[0].name } : null;
+  });
+}

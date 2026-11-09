@@ -1,8 +1,11 @@
 "use client";
 
-import { useActionState } from "react";
+// Who gets the reminders, edited in place by the "Reminders go to" EditableSection.
+// Each choice is a full 44px row. Closes itself after a save.
+import { useActionState, useEffect, useState } from "react";
 import { setInvoiceContactsAction } from "@/app/actions/invoices";
-import { Button } from "@/components/ui";
+import { useEditableSection } from "@/components/data";
+import { Badge, Button } from "@/components/ui";
 import { IDLE_FORM_STATE } from "./form-state";
 
 export interface ContactOption {
@@ -12,66 +15,84 @@ export interface ContactOption {
   hold: string | null;
 }
 
-// Uncontrolled inputs keep the form simple: the server returns the saved choice after each submit.
 export function ContactsPanel({
   invoiceId,
   contacts,
   primaryId,
   copiedIds,
-  locked,
 }: {
   invoiceId: string;
   contacts: ContactOption[];
   primaryId: string | null;
   copiedIds: string[];
-  locked: boolean;
 }) {
   const [state, formAction, pending] = useActionState(setInvoiceContactsAction, IDLE_FORM_STATE);
-  const copied = new Set(copiedIds);
+  const section = useEditableSection();
+  const [primary, setPrimary] = useState(primaryId ?? "");
+  const [copied, setCopied] = useState<string[]>(copiedIds.filter((id) => id !== primaryId));
+  useEffect(() => {
+    if (state.ok) section?.close();
+  }, [state, section]);
   const primaryError = state.fieldErrors.primaryContactId;
 
-  if (contacts.length === 0) {
-    return <p className="text-[14px] text-ink-2">This client has no contacts yet. Add one on the client page.</p>;
-  }
-
   return (
-    <form action={formAction} className="grid gap-5" noValidate>
+    <form action={formAction} className="grid gap-4" noValidate>
       <input type="hidden" name="invoiceId" value={invoiceId} />
-      <fieldset disabled={locked} className="grid gap-3">
-        <legend className="mb-1 text-[13px] font-medium text-ink">Send reminders to</legend>
-        <p className="text-[13px] leading-5 text-ink-3">
-          Reminders go to the chosen contact. Anyone you copy is included on each reminder.
-        </p>
+      <fieldset className="grid gap-2">
+        <legend className="mb-2 text-small text-ink-3">Choose who each reminder is sent to. Anyone copied in gets every reminder too.</legend>
         {primaryError ? <p role="alert" className="text-[12.5px] text-danger">{primaryError}</p> : null}
-        <ul className="grid gap-2">
-          {contacts.map((ct) => (
-            <li key={ct.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-line bg-surface px-3 py-2.5">
-              <div className="min-w-0">
-                <p className="truncate text-[14px] font-medium text-ink">
-                  {ct.name || ct.email}
-                  {ct.hold === "bounced" ? <span className="ml-2 text-[12px] font-semibold text-danger">Bounced</span> : null}
-                </p>
-                <p className="truncate text-[13px] text-ink-3">{ct.email}</p>
-              </div>
-              <div className="flex items-center gap-4 text-[13px] text-ink-2">
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input type="radio" name="primaryContactId" value={ct.id} defaultChecked={ct.id === primaryId} className="h-4 w-4 accent-[var(--accent)]" />
-                  Send to
+        <ul className="divide-y divide-line rounded-[var(--radius-md)] border border-line">
+          {contacts.map((ct) => {
+            const isPrimary = ct.id === primary;
+            return (
+              <li key={ct.id} className="flex flex-wrap items-center justify-between gap-x-3 px-3 py-1">
+                <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3">
+                  <input
+                    type="radio"
+                    name="primaryContactId"
+                    value={ct.id}
+                    checked={isPrimary}
+                    onChange={() => {
+                      setPrimary(ct.id);
+                      setCopied((prev) => prev.filter((x) => x !== ct.id));
+                    }}
+                    className="size-[18px] shrink-0 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2 truncate text-body font-medium text-ink">
+                      {ct.name || ct.email}
+                      {ct.hold === "bounced" ? <Badge tone="danger">Bounced</Badge> : ct.hold ? <Badge>On hold</Badge> : null}
+                    </span>
+                    {ct.name ? <span className="block truncate text-small text-ink-3">{ct.email}</span> : null}
+                  </span>
                 </label>
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input type="checkbox" name="ccContactIds" value={ct.id} defaultChecked={copied.has(ct.id)} className="h-4 w-4 accent-[var(--accent)]" />
-                  Copy
-                </label>
-              </div>
-            </li>
-          ))}
+                {isPrimary ? (
+                  <span className="px-2 text-small text-ink-3">Sent to</span>
+                ) : (
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-[8px] px-2 text-small text-ink-2 hover:bg-surface-2">
+                    <input
+                      type="checkbox"
+                      name="ccContactIds"
+                      value={ct.id}
+                      checked={copied.includes(ct.id)}
+                      onChange={(e) => {
+                        const on = e.currentTarget.checked;
+                        setCopied((prev) => (on ? [...prev.filter((x) => x !== ct.id), ct.id] : prev.filter((x) => x !== ct.id)));
+                      }}
+                      className="size-[18px] accent-[var(--accent)]"
+                    />
+                    Copy in
+                  </label>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </fieldset>
-      {state.message ? (
-        <p role="status" aria-live="polite" className={state.ok ? "text-[13px] text-ink-2" : "text-[13px] text-danger"}>{state.message}</p>
-      ) : null}
-      <div>
-        <Button type="submit" disabled={locked || pending}>{pending ? "Saving…" : "Save contacts"}</Button>
+      {state.ok === false && state.message ? <p role="alert" className="text-small text-danger">{state.message}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" variant="primary" disabled={pending}>{pending ? "Saving…" : "Save"}</Button>
+        <Button type="button" variant="ghost" data-edit-cancel>Cancel</Button>
       </div>
     </form>
   );

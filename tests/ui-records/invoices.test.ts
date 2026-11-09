@@ -30,13 +30,16 @@ vi.mock("next/navigation", () => ({
 
 import { closeDb } from "@/lib/db";
 import {
+  addInvoiceNoteAction,
   createInvoiceAction,
+  recordInstallmentAction,
   setInvoiceContactsAction,
   setInvoiceStatusAction,
   setPaymentPlanAction,
   updateInvoiceAction,
 } from "@/app/actions/invoices";
 import { IDLE_FORM_STATE } from "@/components/invoices/form-state";
+import { clientInvoiceDefaults } from "@/lib/queries/invoices";
 import { resetDb } from "../helpers/db";
 import { adminQuery, form, makeClient, makeInvoice, makeUser, scalar, statusCount, unsentCount, type TestUser } from "./fixtures";
 
@@ -89,6 +92,9 @@ describe("authorization", () => {
     await expect(setInvoiceStatusAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, status: "paused" }))).rejects.toMatchObject({ url: "/login" });
     await expect(setInvoiceContactsAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId }))).rejects.toMatchObject({ url: "/login" });
     await expect(setPaymentPlanAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId }))).rejects.toMatchObject({ url: "/login" });
+    await expect(addInvoiceNoteAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, note: "Hi" }))).rejects.toMatchObject({ url: "/login" });
+    await expect(recordInstallmentAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, installmentId: invoice.invoiceId }))).rejects.toMatchObject({ url: "/login" });
+    expect(await scalar("select count(*)::text from events where invoice_id = $1 and type = 'invoice_note'", [invoice.invoiceId])).toBe("0");
 
     // Offsets of 14 days or less need no approval, but the first message to a client does, so the rows wait as pending approval.
     expect(await unsentCount(invoice.invoiceId)).toBeGreaterThan(0);
@@ -382,5 +388,121 @@ describe("setInvoiceContactsAction", () => {
     expect(state.ok).toBe(true);
     expect(await scalar("select contact_id::text from invoice_contacts where invoice_id = $1 and role = 'primary'", [invoice.invoiceId])).toBe(secondId);
     expect(await scalar("select count(*)::text from invoice_contacts where invoice_id = $1 and role = 'cc'", [invoice.invoiceId])).toBe("1");
+  });
+});
+
+describe("money typed the way people type it", () => {
+  it("accepts 1,234.50 and stores 123450 minor units, while the strict parser stays strict", async () => {
+    const client = await makeClient(owner.userId);
+    await redirectTarget(
+      createInvoiceAction(IDLE_FORM_STATE, form(createFields(client.clientId, client.contactId, { amount: "1,234.50", currency: "GBP" }))),
+    );
+    expect(await scalar("select amount_minor::text from invoices where invoice_number = 'INV-100'")).toBe("123450");
+  });
+
+  it("still rejects an amount with too many decimals, beside the amount field", async () => {
+    const client = await makeClient(owner.userId);
+    const state = await createInvoiceAction(IDLE_FORM_STATE, form(createFields(client.clientId, client.contactId, { amount: "1,234.567" })));
+    expect(state.ok).toBe(false);
+    expect(state.fieldErrors.amount).toMatch(/at most 2 decimal places/);
+  });
+
+  it("accepts grouped amounts in a payment plan", async () => {
+    const client = await makeClient(owner.userId);
+    const invoice = await makeInvoice(owner.userId, client.clientId, { amountMinor: 250000 });
+    const fields: Record<string, string> = {
+      invoiceId: invoice.invoiceId, installmentCount: "2",
+      installmentDate_0: "2027-06-15", installmentAmount_0: "1,000.00",
+      installmentDate_1: "2027-07-15", installmentAmount_1: "1,500.00",
+    };
+    const state = await setPaymentPlanAction(IDLE_FORM_STATE, form(fields));
+    expect(state.ok).toBe(true);
+    expect(await scalar("select string_agg(amount_minor::text, ',' order by position) from payment_plan_installments where invoice_id = $1", [invoice.invoiceId])).toBe("100000,150000");
+  });
+});
+
+describe("client defaults for a new invoice", () => {
+  it("gives each client the currency and terms of its most recent invoice, and only the owner's clients", async () => {
+    const pounds = await makeClient(owner.userId, { name: "Harbour & Co" });
+    const euros = await makeClient(owner.userId, { name: "Quill Labs" });
+    await makeInvoice(owner.userId, pounds.clientId, { currency: "USD", issue: "2026-08-01", due: "2026-08-15" });
+    await adminQuery("update invoices set created_at = created_at - interval '1 day' where client_id = $1", [pounds.clientId]);
+    await makeInvoice(owner.userId, pounds.clientId, { currency: "GBP", issue: "2026-10-01", due: "2026-10-31" });
+    await makeInvoice(owner.userId, euros.clientId, { currency: "EUR", issue: "2026-10-01", due: "2026-10-08" });
+    const other = await makeUser();
+    const theirs = await makeClient(other.userId);
+    await makeInvoice(other.userId, theirs.clientId, { currency: "JPY", amountMinor: 1000 });
+
+    const defaults = await clientInvoiceDefaults(owner.userId);
+    expect(defaults[pounds.clientId]).toEqual({ currency: "GBP", termsDays: 30 });
+    expect(defaults[euros.clientId]).toEqual({ currency: "EUR", termsDays: 7 });
+    expect(defaults[theirs.clientId]).toBeUndefined();
+  });
+});
+
+describe("addInvoiceNoteAction", () => {
+  it("records the note as an invoice_note event", async () => {
+    const client = await makeClient(owner.userId);
+    const invoice = await makeInvoice(owner.userId, client.clientId);
+    const state = await addInvoiceNoteAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, note: "  Promised to pay Friday.  " }));
+    expect(state.ok).toBe(true);
+    expect(await scalar("select detail->>'note' from events where invoice_id = $1 and type = 'invoice_note'", [invoice.invoiceId])).toBe("Promised to pay Friday.");
+  });
+
+  it("asks for text, and refuses another user's invoice without saving anything", async () => {
+    const client = await makeClient(owner.userId);
+    const invoice = await makeInvoice(owner.userId, client.clientId);
+    expect((await addInvoiceNoteAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, note: "   " }))).fieldErrors.note).toBe("Write the note first.");
+    const intruder = await makeUser();
+    h.session.userId = intruder.userId;
+    const state = await addInvoiceNoteAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, note: "Mine now" }));
+    expect(state.ok).toBe(false);
+    expect(await scalar("select count(*)::text from events where invoice_id = $1 and type = 'invoice_note'", [invoice.invoiceId])).toBe("0");
+  });
+
+  it("saves the dispute reason given when marking an invoice disputed", async () => {
+    const client = await makeClient(owner.userId);
+    const invoice = await makeInvoice(owner.userId, client.clientId);
+    const state = await setInvoiceStatusAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, status: "disputed", note: "Hours billed twice." }));
+    expect(state.ok).toBe(true);
+    expect(await scalar("select status from invoices where id = $1", [invoice.invoiceId])).toBe("disputed");
+    expect(await scalar("select detail->>'note' from events where invoice_id = $1 and type = 'invoice_note'", [invoice.invoiceId])).toBe("Hours billed twice.");
+  });
+});
+
+describe("recordInstallmentAction", () => {
+  it("records the installment paid, and the last one marks the invoice paid", async () => {
+    const client = await makeClient(owner.userId);
+    const invoice = await makeInvoice(owner.userId, client.clientId, { amountMinor: 200000 });
+    const plan: Record<string, string> = {
+      invoiceId: invoice.invoiceId, installmentCount: "2",
+      installmentDate_0: "2027-06-15", installmentAmount_0: "1000.00",
+      installmentDate_1: "2027-07-15", installmentAmount_1: "1000.00",
+    };
+    expect((await setPaymentPlanAction(IDLE_FORM_STATE, form(plan))).ok).toBe(true);
+    const ids = (await adminQuery<{ id: string }>("select id from payment_plan_installments where invoice_id = $1 order by position", [invoice.invoiceId])).rows.map((r) => r.id);
+
+    expect((await recordInstallmentAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, installmentId: ids[0] }))).ok).toBe(true);
+    expect(await scalar("select status from payment_plan_installments where id = $1", [ids[0]])).toBe("paid");
+    expect(await scalar("select status from invoices where id = $1", [invoice.invoiceId])).toBe("payment_plan");
+
+    expect((await recordInstallmentAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, installmentId: ids[1] }))).ok).toBe(true);
+    expect(await scalar("select status from invoices where id = $1", [invoice.invoiceId])).toBe("paid");
+    expect(await unsentCount(invoice.invoiceId)).toBe(0);
+  });
+
+  it("refuses an installment of another user's invoice", async () => {
+    const client = await makeClient(owner.userId);
+    const invoice = await makeInvoice(owner.userId, client.clientId, { amountMinor: 200000 });
+    const plan: Record<string, string> = {
+      invoiceId: invoice.invoiceId, installmentCount: "2",
+      installmentDate_0: "2027-06-15", installmentAmount_0: "1000.00",
+      installmentDate_1: "2027-07-15", installmentAmount_1: "1000.00",
+    };
+    await setPaymentPlanAction(IDLE_FORM_STATE, form(plan));
+    const id = await scalar<string>("select id::text from payment_plan_installments where invoice_id = $1 order by position limit 1", [invoice.invoiceId]);
+    h.session.userId = (await makeUser()).userId;
+    expect((await recordInstallmentAction(IDLE_FORM_STATE, form({ invoiceId: invoice.invoiceId, installmentId: id }))).ok).toBe(false);
+    expect(await scalar("select status from payment_plan_installments where id = $1", [id])).toBe("open");
   });
 });

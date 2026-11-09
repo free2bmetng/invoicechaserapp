@@ -62,6 +62,7 @@ export {
   resolveNeedsCheck,
 } from "./approvals";
 export { setAutoSend } from "./client";
+export { addInvoiceNote } from "./notes";
 
 // Sender
 export { runSender, type SenderDeps, type RunSenderOptions, type RunSenderResult } from "./sender";

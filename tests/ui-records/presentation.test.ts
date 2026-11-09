@@ -6,6 +6,10 @@ import {
   EVENT_LABELS, INVOICE_STATUS_LABEL, STATUS_CONTROLS, daysBetween, describeNextMessage, describeOffset, eventLabel, isOverdue, minorToInput, dayLabelFor, lateLabel,
 } from "@/components/invoices/format";
 import { isUuidText, listValue, valuesFrom, zodFieldErrors } from "@/components/invoices/form-state";
+import { formatMoneyInput, normalizeMoneyInput, parseTypedMoney } from "@/components/invoices/money-input";
+import { dueWhen, mainActionFor, paidTiming, statusChangesFor } from "@/components/invoices/status-model";
+import { parseMoneyToMinor } from "@/lib/money";
+import { INVOICE_STATUSES } from "@/lib/types";
 import {
   defaultApproval, isFinalMisplaced, isPresetTone, lastKeyOf, newDraft, ordinal, parseOffset, presetText, sendOrder, timingText, type DraftStep,
 } from "@/components/sequences/state";
@@ -162,5 +166,79 @@ describe("form state helpers", () => {
   it("recognises UUIDs only", () => {
     expect(isUuidText("00000000-0000-4000-8000-000000000000")).toBe(true);
     expect(isUuidText("not-a-uuid")).toBe(false);
+  });
+});
+
+describe("money as people type it", () => {
+  it("normalises grouped, symbol and decimal-comma amounts to the strict form", () => {
+    expect(normalizeMoneyInput("1,234.50")).toBe("1234.50");
+    expect(normalizeMoneyInput(" £1 234.50 ")).toBe("1234.50");
+    expect(normalizeMoneyInput("GBP 2,720")).toBe("2720");
+    expect(normalizeMoneyInput("1.234,50")).toBe("1234.50");
+    expect(normalizeMoneyInput("12,5")).toBe("12.5");
+    expect(normalizeMoneyInput("1,234,567.89")).toBe("1234567.89");
+    expect(normalizeMoneyInput("1234.50")).toBe("1234.50");
+  });
+
+  it("leaves what it cannot read for the strict parser to reject", () => {
+    expect(normalizeMoneyInput("12abc")).toBe("12abc");
+    expect(normalizeMoneyInput("1.2.3,4.5")).toBe("1.2.3,4.5");
+    expect(() => parseTypedMoney("-5", "USD")).toThrow();
+    expect(() => parseTypedMoney("1,234.567", "USD")).toThrow(/at most 2 decimal places/);
+  });
+
+  it("keeps src/lib/money strict: grouped text is still refused there", () => {
+    expect(() => parseMoneyToMinor("1,234.50", "USD")).toThrow();
+    expect(parseTypedMoney("1,234.50", "USD")).toBe(123450);
+    expect(parseTypedMoney("1,234", "JPY")).toBe(1234);
+  });
+
+  it("formats on blur with grouping and the currency's own decimals", () => {
+    expect(formatMoneyInput("1234.5", "USD")).toBe("1,234.50");
+    expect(formatMoneyInput("1234567", "JPY")).toBe("1,234,567");
+    expect(formatMoneyInput("1.5", "BHD")).toBe("1.500");
+    expect(formatMoneyInput("abc", "USD")).toBe("abc");
+    expect(formatMoneyInput("", "USD")).toBe("");
+  });
+});
+
+describe("the one main action per status", () => {
+  it("chooses the action the critic expects for each status", () => {
+    expect(mainActionFor("open")).toMatchObject({ label: "Mark as paid", status: "paid", variant: "primary" });
+    expect(mainActionFor("disputed")).toMatchObject({ label: "Resolve dispute", status: "open" });
+    expect(mainActionFor("payment_plan", { hasOpenInstallment: true })).toMatchObject({ kind: "record_installment", label: "Record installment" });
+    expect(mainActionFor("payment_plan", { hasOpenInstallment: false })).toMatchObject({ label: "Mark as paid", status: "paid" });
+    expect(mainActionFor("paid")).toMatchObject({ label: "Reopen", status: "open" });
+    expect(mainActionFor("written_off")).toMatchObject({ label: "Reopen", status: "open" });
+    expect(mainActionFor("paused")).toMatchObject({ label: "Resume reminders", status: "open" });
+  });
+
+  it("never offers the current status or the main action again under Change status", () => {
+    for (const status of INVOICE_STATUSES) {
+      const main = mainActionFor(status, { hasOpenInstallment: true });
+      const changes = statusChangesFor(status).map((c) => c.status);
+      expect(changes).not.toContain(status);
+      if (main.status) expect(changes).not.toContain(main.status);
+      expect(changes).not.toContain("payment_plan");
+    }
+    // A paid invoice offers nothing to pause or dispute.
+    expect(statusChangesFor("paid")).toEqual([]);
+    expect(statusChangesFor("disputed").find((c) => c.status === "written_off")?.confirm).toBe("danger");
+    expect(statusChangesFor("open").find((c) => c.status === "disputed")?.confirm).toBe("reason");
+  });
+});
+
+describe("relative due phrases", () => {
+  it("says Due today, Due tomorrow, Due in N days, N days overdue", () => {
+    expect(dueWhen("2026-11-09", "2026-11-09")).toMatchObject({ text: "Due today", tone: "warn" });
+    expect(dueWhen("2026-11-10", "2026-11-09").text).toBe("Due tomorrow");
+    expect(dueWhen("2026-11-14", "2026-11-09").text).toBe("Due in 5 days");
+    expect(dueWhen("2026-11-08", "2026-11-09")).toMatchObject({ text: "1 day overdue", tone: "danger", overdueDays: 1 });
+  });
+
+  it("says how late a payment was, by the paid day in the user's zone", () => {
+    expect(paidTiming("2026-10-20T10:00:00Z", "2026-10-10", "UTC")).toBe("Paid 10 days late");
+    expect(paidTiming("2026-10-10T23:30:00Z", "2026-10-11", "Europe/London")).toBe("Paid on the due date");
+    expect(paidTiming("2026-10-05T10:00:00Z", "2026-10-10", "UTC")).toBe("Paid 5 days early");
   });
 });
