@@ -267,7 +267,8 @@ describe("saveClientContactsAction", () => {
       contactId,
       [`contactName_${contactId}`]: "Accounts",
       [`contactEmail_${contactId}`]: contactEmail,
-      [`originalName_${contactId}`]: "Accounts",
+      // The name the contact was loaded with: makeClient names the primary contact after the client.
+      [`originalName_${contactId}`]: "Acme Ltd",
       [`originalEmail_${contactId}`]: "acme@acme.test",
       ...extra,
     };
