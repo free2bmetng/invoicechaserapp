@@ -4,7 +4,9 @@ import { PasskeyOffer } from "@/components/passkey/passkey-offer";
 import { PASSKEY_DISMISSED_COOKIE, PASSKEY_OFFER_COOKIE, passkeyOfferVisible } from "@/lib/passkey-offer";
 import { requireUserId } from "@/lib/session";
 import { getShellData } from "@/lib/queries/shell";
-import { ICONS, NavList, type NavItem } from "./nav";
+// Icons are looked up inside the client NavList by key. A server component can't read
+// values exported from a "use client" module, which is why they used to render empty.
+import { NavList, type NavItem } from "./nav";
 
 // Server component. It reads the session and cookies, so it must sit inside a Suspense boundary.
 export async function Shell({ children }: { children: React.ReactNode }) {
@@ -14,14 +16,14 @@ export async function Shell({ children }: { children: React.ReactNode }) {
   const showPasskeyOffer = passkeyOfferVisible(jar.get(PASSKEY_OFFER_COOKIE)?.value, jar.get(PASSKEY_DISMISSED_COOKIE)?.value);
 
   const items: NavItem[] = [
-    { key: "dashboard", label: "Dashboard", href: "/", icon: ICONS.dashboard },
-    { key: "needs", label: "Needs you", href: "/needs-you", badge: needsYouCount, icon: ICONS.needs },
-    { key: "next7", label: "Next 7 days", href: "/next-7-days", icon: ICONS.next7 },
-    { key: "invoices", label: "Invoices", href: "/invoices", icon: ICONS.invoices },
-    { key: "clients", label: "Clients", href: "/clients", icon: ICONS.clients },
-    { key: "sequences", label: "Sequences", href: "/sequences", icon: ICONS.sequences },
-    { key: "messages", label: "Message log", href: "/messages", icon: ICONS.messages },
-    { key: "settings", label: "Settings", href: "/settings", icon: ICONS.settings },
+    { key: "dashboard", label: "Dashboard", href: "/" },
+    { key: "needs", label: "Needs you", href: "/needs-you", badge: needsYouCount },
+    { key: "next7", label: "Next 7 days", href: "/next-7-days" },
+    { key: "invoices", label: "Invoices", href: "/invoices" },
+    { key: "clients", label: "Clients", href: "/clients" },
+    { key: "sequences", label: "Sequences", href: "/sequences" },
+    { key: "messages", label: "Message log", href: "/messages" },
+    { key: "settings", label: "Settings", href: "/settings" },
   ];
 
   return (
@@ -86,7 +88,7 @@ function AccountFooter({ email, compact = false }: { email: string; compact?: bo
         <p className="truncate text-[13px] text-ink-2" title={email}>{email || "Account"}</p>
       </div>
       <form action="/logout" method="post">
-        <button type="submit" className="h-8 whitespace-nowrap rounded-[8px] px-2.5 text-[13px] font-medium text-ink-2 transition-colors hover:bg-surface hover:text-ink">
+        <button type="submit" className="h-11 whitespace-nowrap rounded-[8px] px-3 text-[13px] font-medium text-ink-2 transition-colors hover:bg-surface hover:text-ink">
           Sign out
         </button>
       </form>

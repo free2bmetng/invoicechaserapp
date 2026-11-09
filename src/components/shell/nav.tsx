@@ -12,7 +12,6 @@ export interface NavItem {
   label: string;
   href: string;
   badge?: number;
-  icon: ReactNode;
 }
 
 const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" } as const;
@@ -40,11 +39,11 @@ export function NavList({ items }: { items: NavItem[] }) {
               href={item.href}
               aria-current={active ? "page" : undefined}
               className={cx(
-                "group flex h-10 items-center gap-3 rounded-[10px] px-3 text-[14px] font-medium transition-colors duration-150",
+                "group flex h-11 items-center gap-3 rounded-[10px] px-3 text-[14px] font-medium transition-colors duration-150",
                 active ? "bg-accent-soft text-accent" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
               )}
             >
-              <span className={cx("shrink-0", active ? "text-accent" : "text-ink-3 group-hover:text-ink-2")}>{item.icon}</span>
+              <span className={cx("shrink-0", active ? "text-accent" : "text-ink-3 group-hover:text-ink-2")}>{ICONS[item.key]}</span>
               <span className="flex-1 truncate">{item.label}</span>
               {item.badge ? (
                 <span
