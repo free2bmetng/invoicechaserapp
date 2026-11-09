@@ -142,9 +142,10 @@ export function SendingDomainForm({
     { label: "Value", text: DMARC_VALUE, copy: { value: DMARC_VALUE } },
   ];
 
+  // One form for the whole section: the domain, the notice, the DNS records, and the Save at the end.
   return (
-    <div className="flex flex-col gap-6">
-      <form ref={form.formRef} onSubmit={form.onSubmit} noValidate className="flex flex-col gap-5">
+    <form ref={form.formRef} onSubmit={form.onSubmit} noValidate className="flex flex-col gap-6">
+      <div className="flex flex-col gap-5">
         <Field
           id="sendingDomain"
           label="Sending domain"
@@ -163,9 +164,7 @@ export function SendingDomainForm({
             onChange={(e) => setDomain(e.target.value)}
           />
         </Field>
-
-        <SaveBar pending={form.pending} state={form.state} idleLabel={submitLabel} pendingLabel="Saving…" />
-      </form>
+      </div>
 
       {!sendingEnabled ? (
         <Callout tone="info">
@@ -183,7 +182,7 @@ export function SendingDomainForm({
         </div>
 
         <ol className="flex list-decimal flex-col gap-3 pl-5 text-[14px] leading-6 text-ink marker:font-medium marker:text-ink-3">
-          <li>Save your domain above. The names below then use it.</li>
+          <li>Enter your domain above, then save at the end of this section. The names below then use it.</li>
           <li>
             Open your sending service and add the domain. It shows the exact DKIM and SPF values for it. Copy those
             values from there, because they are unique to your domain.
@@ -211,6 +210,8 @@ export function SendingDomainForm({
           lines={dmarc}
         />
       </div>
-    </div>
+
+      <SaveBar pending={form.pending} state={form.state} idleLabel={submitLabel} pendingLabel="Saving…" />
+    </form>
   );
 }

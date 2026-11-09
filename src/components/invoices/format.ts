@@ -203,3 +203,13 @@ export function lateLabel(value: number | null): string | null {
   if (days === 0) return "On time";
   return `${days} ${days === 1 ? "day" : "days"} late`;
 }
+
+// The line under a skipped reminder. Planned-time reasons all use the same sentence.
+const PLANNED_TIME_PASSED = "Skipped. Its due date had passed when this reminder was planned, so it was never sent late.";
+export function skippedLine(reason: string | undefined): string {
+  if (reason === "planned_time_passed" || reason === "passed_at_replan") return PLANNED_TIME_PASSED;
+  if (reason === "cancelled_by_user") return "Skipped. You cancelled this reminder.";
+  if (reason === "dismissed_after_check") return "Skipped. You dismissed this reminder after checking delivery.";
+  if (reason === "step_removed") return "Skipped. Its step was removed from the sequence.";
+  return "Skipped. This reminder will not be sent.";
+}

@@ -38,12 +38,14 @@ export function AutoSendSwitch({ clientId, autoSend }: { clientId: string; autoS
           aria-labelledby="autosend-label"
           disabled={pending}
           onClick={toggle}
-          className="relative mt-0.5 inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border border-line-strong bg-surface-2 transition-colors duration-200 aria-checked:border-accent aria-checked:bg-accent focus-visible:ring-[3px] focus-visible:ring-accent/25 disabled:opacity-60"
+          className="-m-2 flex h-11 w-16 shrink-0 cursor-pointer items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:opacity-60"
         >
           <span
             aria-hidden="true"
-            className={`absolute top-[3px] left-[3px] h-[18px] w-[18px] rounded-full bg-surface shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-200 ease-out ${shown ? "translate-x-5" : ""}`}
-          />
+            className={`relative inline-block h-6 w-11 rounded-full border transition-colors duration-200 ${shown ? "border-accent bg-accent" : "border-line-strong bg-surface-2"}`}
+          >
+            <span className={`absolute top-[3px] left-[3px] h-[18px] w-[18px] rounded-full bg-surface shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-200 ease-out ${shown ? "translate-x-5" : ""}`} />
+          </span>
         </button>
       </div>
       <p role="status" aria-live="polite" className={state.ok === false ? "text-[13px] text-danger" : "text-[13px] text-ink-2"}>

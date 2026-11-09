@@ -226,14 +226,14 @@ export function SequenceEditor({
             )}
           </section>
 
-          <div className="sticky bottom-0 z-30 -mx-4 grid gap-2 border-t border-line bg-surface px-4 py-3 shadow-pop sm:mx-0 sm:flex sm:items-center sm:justify-between sm:gap-3 sm:rounded-[var(--radius-lg)] sm:border sm:px-5">
+          <div className={cx("-mx-4 grid gap-2 border-t border-line bg-surface px-4 py-3 sm:mx-0 sm:flex sm:items-center sm:justify-between sm:gap-3 sm:rounded-[var(--radius-lg)] sm:border sm:px-5", dirty ? "sticky bottom-0 z-30 shadow-pop" : "relative")}>
             <p role="status" aria-live="polite" className={cx("min-w-0 text-[14px] font-medium", statusIsError ? "text-danger" : dirty ? "text-warn" : "text-ink-2")}>
               {statusText}
             </p>
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2 sm:flex sm:shrink-0 sm:items-center">
               {focused ? (
                 <Button type="button" variant="secondary" className="min-h-11 w-full lg:hidden" onClick={() => openPreview(focused.key)}>
-                  Preview
+                  Open preview
                 </Button>
               ) : null}
               <Button type="submit" variant="primary" className="min-h-11 w-full sm:min-h-10 sm:w-auto" disabled={pending || blockers.length > 0 || !dirty}>

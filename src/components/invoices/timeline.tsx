@@ -1,13 +1,22 @@
 // The message timeline and event history for one invoice. Server-rendered from engine reads.
 import Link from "next/link";
 import { MessageStatusBadge } from "@/components/status";
-import { describeOffset, eventLabel, instantLabel, instantLabelWithSeconds } from "./format";
+import { describeOffset, eventLabel, instantLabel, instantLabelWithSeconds, skippedLine } from "./format";
 import type { MessageStatus } from "@/lib/types";
 import type { EventView, MessageView } from "@/lib/engine";
 
 const TONE_NAME: Record<string, string> = { friendly: "Friendly", neutral: "Neutral", firm: "Firm", custom: "Custom" };
 
 export function Timeline({ messages, events, zone }: { messages: MessageView[]; events: EventView[]; zone: string }) {
+  // The newest message_skipped event for each reminder carries the reason.
+  const skipReason = new Map<string, string>();
+  for (const e of events) {
+    const id = e.detail.scheduled_message_id;
+    const reason = e.detail.reason;
+    if (e.type === "message_skipped" && typeof id === "string" && typeof reason === "string" && !skipReason.has(id)) {
+      skipReason.set(id, reason);
+    }
+  }
   return (
     <div className="grid gap-8">
       <section aria-labelledby="reminders-heading" className="grid gap-3">
@@ -48,6 +57,9 @@ export function Timeline({ messages, events, zone }: { messages: MessageView[]; 
                       Subject: {m.subject || "(from the sequence)"}
                     </p>
                   )}
+                  {m.status === "skipped" ? (
+                    <p className="text-[13px] leading-5 text-ink-2">{skippedLine(skipReason.get(m.id))}</p>
+                  ) : null}
                   {m.status === "pending_approval" ? (
                     <p className="text-[13px]">
                       <Link href="/needs-you" className="font-medium text-accent underline underline-offset-4">Review in Needs you</Link>

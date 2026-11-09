@@ -48,6 +48,7 @@ export function SummaryLine({ overdue, pending }: { overdue: { currency: string;
           {overdue.map((t, i) => (
             <span key={t.currency}>
               {i > 0 ? " · " : ""}
+              <span className="font-semibold text-ink-3">{t.currency}</span>{" "}
               <Money minor={t.amountMinor} currency={t.currency} className="font-medium text-ink" />
             </span>
           ))}

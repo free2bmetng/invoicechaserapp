@@ -25,7 +25,7 @@ export function SettingsNav() {
             <a
               href={`#${section.id}`}
               className={cx(
-                "inline-flex h-9 items-center rounded-full border border-line bg-surface px-4 text-[13.5px] font-medium whitespace-nowrap text-ink-2",
+                "inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-[13.5px] font-medium whitespace-nowrap text-ink-2",
                 "transition-colors duration-150 hover:text-ink",
                 "lg:h-10 lg:w-full lg:rounded-[10px] lg:border-0 lg:bg-transparent lg:px-3 lg:text-[14px] lg:hover:bg-surface-2",
               )}

@@ -17,7 +17,7 @@ import {
 } from "@/lib/engine";
 import { describeEngineError, listStandardSequenceChoices } from "@/lib/queries/invoices";
 import { requireUserId } from "@/lib/session";
-import { failedState, isUuidText, readText, valuesFrom, type FormState } from "@/components/invoices/form-state";
+import { failedState, isUuidText, readText, readTexts, valuesFrom, type FormState } from "@/components/invoices/form-state";
 
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 const BAD_CLIENT = "That client could not be found. Refresh the page and try again.";
@@ -211,4 +211,70 @@ export async function resumeClientAction(_previous: FormState, formData: FormDat
     fieldErrors: {},
     values: {},
   };
+}
+
+// One save for the whole contact block: the client's details, then each contact whose name or
+// address changed, then a new contact if one was typed. Each contact is checked against the values
+// it was loaded with, so an untouched contact is never rewritten.
+export async function saveClientContactsAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const userId = await requireUserId();
+  const clientId = readText(formData, "clientId").trim();
+  const values = valuesFrom(formData, ["name", "email", "timezone", "sequenceId", "newContactName", "newContactEmail"]);
+  if (!isUuidText(clientId)) return failedState(BAD_CLIENT, {}, values);
+
+  const errors: Record<string, string> = {};
+  const sequenceIds = new Set((await listStandardSequenceChoices(userId)).map((s) => s.id));
+  const fields = checkClientFields(formData, sequenceIds, errors);
+  const primaryId = readText(formData, "primaryId").trim();
+
+  const changes: { id: string; name: string; email: string }[] = [];
+  for (const id of readTexts(formData, "contactId").filter(isUuidText)) {
+    const name = readText(formData, `contactName_${id}`).trim();
+    const email = readText(formData, `contactEmail_${id}`).trim().toLowerCase();
+    values[`contactName_${id}`] = name;
+    values[`contactEmail_${id}`] = email;
+    const unchanged =
+      name === readText(formData, `originalName_${id}`).trim() &&
+      email === readText(formData, `originalEmail_${id}`).trim().toLowerCase();
+    if (unchanged) continue;
+    if (name.length > 200) errors[`contactName_${id}`] = "Use 200 characters or fewer.";
+    if (!EMAIL.test(email) || email.length > 254) errors[`contactEmail_${id}`] = "Enter a valid email address.";
+    changes.push({ id, name, email });
+  }
+
+  const newName = readText(formData, "newContactName").trim();
+  const newEmail = readText(formData, "newContactEmail").trim().toLowerCase();
+  const addNew = newName !== "" || newEmail !== "";
+  if (addNew && (!EMAIL.test(newEmail) || newEmail.length > 254)) {
+    errors.newContactEmail = "Enter a valid email address, or leave both new-contact fields empty.";
+  }
+  if (!fields || Object.keys(errors).length > 0) {
+    return failedState("Check the highlighted fields.", errors, values);
+  }
+
+  try {
+    await updateClient(
+      userId,
+      clientId,
+      { name: fields.name, email: fields.email, timezone: fields.timezone, sequenceId: fields.sequenceId },
+      systemClock,
+    );
+    for (const change of changes) {
+      await upsertContact(
+        userId,
+        clientId,
+        { id: change.id, name: change.name, email: change.email, isPrimary: change.id === primaryId },
+        systemClock,
+      );
+    }
+    if (addNew) {
+      await upsertContact(userId, clientId, { name: newName, email: newEmail, isPrimary: false }, systemClock);
+    }
+  } catch (err) {
+    const message = describeEngineError(err);
+    const field = fieldForEngineMessage(message);
+    return failedState(message, field === "email" ? { email: message } : field === "name" ? { name: message } : {}, values);
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Saved.", fieldErrors: {}, values: {} };
 }

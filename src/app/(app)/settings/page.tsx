@@ -24,7 +24,7 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Account"
         title="Settings"
-        description="Who reminders come from, when they go out, and how you get paid. Each section has one Save at its end."
+        description="Who reminders come from, when they go out, and how you get paid. Each section with fields to change ends with its own Save."
       />
       <Suspense fallback={<CardsSkeleton cards={6} />}>
         <SettingsBody />

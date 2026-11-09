@@ -74,7 +74,7 @@ export function StepCard(props: StepCardProps) {
           ) : null}
         </div>
         <div className="flex gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={onPreview} aria-label={`Preview step ${index + 1}`} className="min-h-11 sm:min-h-8">Preview</Button>
+          <Button type="button" variant="secondary" size="sm" onClick={onPreview} aria-label={`Preview this step, step ${index + 1}`} className="min-h-11 sm:min-h-8">Preview this step</Button>
           <Button type="button" variant="ghost" size="sm" onClick={onRemove} aria-label={`Delete step ${index + 1}`} className="min-h-11 sm:min-h-8">Delete</Button>
         </div>
       </div>

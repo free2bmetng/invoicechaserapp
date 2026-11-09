@@ -16,7 +16,7 @@ export function SequenceCards({ sequences, usage }: { sequences: SequenceView[];
           <li key={s.id} className="grid gap-4 rounded-[var(--radius-lg)] border border-line bg-surface p-5 shadow-card sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-6">
             <div className="grid min-w-0 gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Link href={`/sequences/${s.id}`} className="text-[16px] font-semibold text-ink underline-offset-4 hover:underline">
+                <Link href={`/sequences/${s.id}`} className="inline-flex min-h-11 items-center text-[16px] font-semibold text-ink underline-offset-4 hover:underline sm:min-h-0">
                   {s.name}
                 </Link>
                 {s.isDefault ? <Badge tone="accent">Default</Badge> : null}

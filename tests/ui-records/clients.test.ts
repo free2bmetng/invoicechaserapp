@@ -35,6 +35,7 @@ import {
   removeContactAction,
   resumeClientAction,
   resumeContactAction,
+  saveClientContactsAction,
   setAutoSendAction,
   updateClientAction,
   upsertContactAction,
@@ -250,5 +251,63 @@ describe("holds and resume", () => {
     const contact = await resumeContactAction(IDLE_FORM_STATE, form({ contactId: theirs.contactId }));
     expect(contact.ok).toBe(false);
     expect(await scalar("select reply_held_at is not null from clients where id = $1", [theirs.clientId])).toBe(true);
+  });
+});
+
+// The one-Save contact block: validation keeps every write back, and a save touches only what changed.
+describe("saveClientContactsAction", () => {
+  function blockFields(clientId: string, contactId: string, contactEmail: string, extra: Record<string, string> = {}) {
+    return {
+      clientId,
+      name: "Acme Ltd",
+      email: "acme@acme.test",
+      timezone: "",
+      sequenceId: "",
+      primaryId: contactId,
+      contactId,
+      [`contactName_${contactId}`]: "Accounts",
+      [`contactEmail_${contactId}`]: contactEmail,
+      [`originalName_${contactId}`]: "Accounts",
+      [`originalEmail_${contactId}`]: "acme@acme.test",
+      ...extra,
+    };
+  }
+
+  it("refuses without a session", async () => {
+    const client = await makeClient(owner.userId);
+    h.session.userId = null;
+    await expect(saveClientContactsAction(IDLE_FORM_STATE, form(blockFields(client.clientId, client.contactId, "acme@acme.test")))).rejects.toMatchObject({ url: "/login" });
+  });
+
+  it("reports a bad contact address beside its field and changes nothing", async () => {
+    const client = await makeClient(owner.userId, { name: "Acme Ltd", email: "acme@acme.test" });
+    const state = await saveClientContactsAction(IDLE_FORM_STATE, form(blockFields(client.clientId, client.contactId, "not-an-email")));
+    expect(state.ok).toBe(false);
+    expect(state.fieldErrors[`contactEmail_${client.contactId}`]).toBe("Enter a valid email address.");
+    expect(await scalar("select email from contacts where id = $1", [client.contactId])).toBe("acme@acme.test");
+  });
+
+  it("saves a changed contact and adds a new one, and leaves an untouched contact alone", async () => {
+    const client = await makeClient(owner.userId, { name: "Acme Ltd", email: "acme@acme.test" });
+    await upsertContactAction(IDLE_FORM_STATE, form({ clientId: client.clientId, name: "Second", email: "second@acme.test" }));
+    const secondId = await scalar<string>("select id::text from contacts where client_id = $1 and email = 'second@acme.test'", [client.clientId]);
+
+    const state = await saveClientContactsAction(
+      IDLE_FORM_STATE,
+      form({
+        ...blockFields(client.clientId, client.contactId, "acme@acme.test"),
+        contactId: [client.contactId, secondId],
+        [`contactName_${secondId}`]: "Second",
+        [`contactEmail_${secondId}`]: "second@acme.test",
+        [`originalName_${secondId}`]: "Second",
+        [`originalEmail_${secondId}`]: "second@acme.test",
+        newContactName: "Newcomer",
+        newContactEmail: "new@acme.test",
+      }),
+    );
+    expect(state.ok).toBe(true);
+    expect(await scalar("select name from contacts where id = $1", [client.contactId])).toBe("Accounts");
+    expect(await scalar("select count(*)::text from events where type = 'contact_updated' and detail->>'contact_id' = $1", [secondId])).toBe("0");
+    expect(await scalar("select count(*)::text from contacts where client_id = $1 and email = 'new@acme.test'", [client.clientId])).toBe("1");
   });
 });

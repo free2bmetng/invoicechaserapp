@@ -6,9 +6,8 @@ import { Card, EmptyState, PageHeader } from "@/components/ui";
 import { DetailSkeleton } from "@/components/invoices/skeletons";
 import { LinkButton } from "@/components/invoices/link-button";
 import { InvoiceRows, computeRowData } from "@/components/invoices/invoice-list";
-import { ClientDetailsForm } from "@/components/clients/client-details-form";
+import { ClientContactsForm } from "@/components/clients/client-contacts-form";
 import { AutoSendSwitch } from "@/components/clients/auto-send-switch";
-import { ContactsEditor } from "@/components/clients/contacts-editor";
 import { HoldsPanel } from "@/components/clients/holds-panel";
 import { dayLabelFor, lateLabel, todayIn } from "@/components/invoices/format";
 import { isUuidText } from "@/components/invoices/form-state";
@@ -107,31 +106,22 @@ async function ClientDetailSection({ params }: { params: Promise<{ id: string }>
             <InvoiceRows rows={rows} showClient={false} />
           )}
         </Section>
-        <div className="grid items-start gap-6 lg:grid-cols-2">
-          <Section id="details-heading" title="Details" description="Who this client is, the zone their send window uses, and the sequence for their invoices.">
-            <ClientDetailsForm
-              clientId={client.id}
-              name={client.name}
-              email={client.email}
-              timezone={client.timezone}
-              sequenceId={client.sequenceId}
-              sequences={sequences}
-              workspaceZone={workspace.zone}
-            />
-          </Section>
-
-          <Section id="autosend-heading" title="Auto-send">
-            <AutoSendSwitch clientId={client.id} autoSend={client.autoSend} />
-          </Section>
-        </div>
-
-        <Section id="contacts-heading" title="Contacts" description="The primary contact receives reminders. Anyone else you add can be copied on invoices.">
-          <ContactsEditor
+        <Section id="contacts-heading" title="Contact details" description="The client's details, and everyone who receives reminders for them. One Save covers the whole block.">
+          <ClientContactsForm
             clientId={client.id}
+            name={client.name}
+            email={client.email}
+            timezone={client.timezone}
+            sequenceId={client.sequenceId}
+            sequences={sequences}
+            workspaceZone={workspace.zone}
             contacts={client.contacts.map((ct) => ({ id: ct.id, name: ct.name, email: ct.email, isPrimary: ct.isPrimary, hold: ct.hold }))}
           />
         </Section>
 
+        <Section id="autosend-heading" title="Auto-send">
+          <AutoSendSwitch clientId={client.id} autoSend={client.autoSend} />
+        </Section>
       </div>
     </>
   );
