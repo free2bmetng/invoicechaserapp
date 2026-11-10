@@ -1,75 +1,125 @@
-// The clients list. Server-rendered from the engine's listClients read. Wide screens show one header
-// row above the rows. Phones label each value inline and drop empty values, so no dash stacks up.
-import Link from "next/link";
+// The clients table. Server-rendered: sorting is a set of links, and each row is one link to the
+// client. On a phone each row is two lines: the client and what they owe, then the labelled facts.
 import type { ClientListItem } from "@/lib/engine";
+import { Card, cx } from "@/components/ui";
 import { Money } from "@/components/money";
+import { Table, TBody, THead, Td, Th, Tr } from "@/components/data";
 import { dayLabelFor, lateLabel } from "@/components/invoices/format";
+import {
+  FIRST_DIR, outstandingBars, sortClients, type ClientSortKey, type OutstandingBar, type SortDir,
+} from "@/app/(app)/clients/client-data";
 
-// Largest overdue amount first. Amounts in different currencies are compared by their largest single
-// currency line, because they cannot be added. Clients with nothing overdue go last, by name.
+// Kept for older callers: largest overdue amount first.
 export function sortByOverdue(clients: ClientListItem[]): ClientListItem[] {
-  const largest = (c: ClientListItem) => c.overdue.reduce((max, t) => Math.max(max, t.amountMinor), 0);
-  return [...clients].sort((a, b) => largest(b) - largest(a) || a.name.localeCompare(b.name, "en"));
+  return sortClients(clients, "overdue", "desc");
 }
 
-const COLUMNS = "sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] sm:items-center sm:gap-5";
-
-function Empty() {
-  return <span className="hidden text-ink-3 sm:inline">—</span>;
+export function clientsHref(params: { q?: string; sort?: ClientSortKey; dir?: SortDir; add?: boolean }): string {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set("q", params.q);
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.dir) sp.set("dir", params.dir);
+  if (params.add) sp.set("add", "1");
+  const s = sp.toString();
+  return s ? `/clients?${s}` : "/clients";
 }
 
-export function ClientRows({ clients, zone }: { clients: ClientListItem[]; zone: string }) {
+function Bar({ bar }: { bar: OutstandingBar }) {
+  const overdueShare = bar.amountMinor > 0 ? bar.overdueMinor / bar.amountMinor : 0;
   return (
-    <div className="grid gap-3">
-      <div aria-hidden="true" className={`hidden px-5 text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-3 sm:grid ${COLUMNS}`}>
-        <span>Client</span>
-        <span>Overdue</span>
-        <span>Typically pays</span>
-        <span>Last contact</span>
-      </div>
-      <ul aria-label="Clients" className="grid gap-3">
-        {clients.map((c) => (
-          <li key={c.id}>
-            <Link
-              href={`/clients/${c.id}`}
-              className={`grid gap-3 rounded-[var(--radius-lg)] border border-line bg-surface px-4 py-4 shadow-card transition-colors duration-150 hover:border-line-strong hover:bg-surface-2/50 sm:px-5 ${COLUMNS}`}
-            >
-              <div className="min-w-0">
-                <p className="truncate text-[15px] font-semibold text-ink">{c.name}</p>
-                <p className="truncate text-[13px] text-ink-2">{c.email}</p>
-                {c.replyHeldAt || c.autoSend ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {c.replyHeldAt ? (
-                      <span className="rounded-full border border-warn/25 bg-warn-soft px-2 py-0.5 text-[12px] font-medium text-warn">Replied · on hold</span>
-                    ) : null}
-                    {c.autoSend ? (
-                      <span className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-medium text-ink-2">Auto-send on</span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+    <span aria-hidden="true" className="mt-1.5 ml-auto flex h-1 w-24 justify-end overflow-hidden rounded-full bg-surface-3 max-sm:hidden">
+      <span className="flex h-full min-w-[3px] overflow-hidden rounded-full" style={{ width: `${Math.max(3, bar.share * 100)}%` }}>
+        <span className="h-full bg-neutral-fill" style={{ flexGrow: 1 - overdueShare }} />
+        <span className="h-full bg-danger-fill" style={{ flexGrow: overdueShare }} />
+      </span>
+    </span>
+  );
+}
 
-              <div className="flex flex-wrap items-baseline gap-x-2 text-[13px] sm:block">
-                <span className="text-ink-3 sm:hidden">Overdue</span>
-                {c.overdue.length === 0 ? <Empty /> : null}
-                {c.overdue.map((t) => (
-                  <span key={t.currency} className="block font-medium text-warn"><Money minor={t.amountMinor} currency={t.currency} /></span>
-                ))}
-              </div>
+function Amounts({ totals, tone }: { totals: { currency: string; amountMinor: number }[]; tone?: "danger" }) {
+  const shown = totals.filter((t) => t.amountMinor > 0);
+  if (shown.length === 0) return null;
+  return (
+    <span className="inline-flex flex-col items-end gap-0.5 max-sm:inline">
+      {shown.map((t, i) => (
+        <span key={t.currency} className={cx(tone === "danger" && "text-danger")}>
+          {i > 0 ? <span aria-hidden="true" className="text-ink-3 sm:hidden"> · </span> : null}
+          <Money minor={t.amountMinor} currency={t.currency} />
+        </span>
+      ))}
+    </span>
+  );
+}
 
-              <div className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink-2 sm:block">
-                <span className="text-ink-3 sm:hidden">Typically pays</span>
-                {lateLabel(c.avgDaysLate) === null ? <Empty /> : <span className="num">{lateLabel(c.avgDaysLate)}</span>}
-              </div>
-
-              <div className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink-2 sm:block">
-                <span className="text-ink-3 sm:hidden">Last contact</span>
-                {c.lastContactAt ? <span className="num">{dayLabelFor(c.lastContactAt.toISOString(), zone)}</span> : <Empty />}
-              </div>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
+export function ClientTable({
+  clients,
+  zone,
+  sort,
+  q,
+}: {
+  clients: ClientListItem[];
+  zone: string;
+  sort: { key: ClientSortKey; dir: SortDir };
+  q: string;
+}) {
+  const bars = outstandingBars(clients);
+  const th = (key: ClientSortKey) => {
+    const active = sort.key === key;
+    const nextDir: SortDir = active ? (sort.dir === "asc" ? "desc" : "asc") : FIRST_DIR[key];
+    return { sortHref: clientsHref({ q, sort: key, dir: nextDir }), sorted: active ? sort.dir : undefined };
+  };
+  return (
+    <Card className="overflow-hidden">
+      <Table label="Clients">
+        <THead>
+          <Th {...th("name")}>Client</Th>
+          <Th align="right" {...th("outstanding")}>Outstanding</Th>
+          <Th align="right" {...th("overdue")}>Overdue</Th>
+          <Th {...th("pays")}>Typically pays</Th>
+          <Th {...th("contact")}>Last contact</Th>
+        </THead>
+        <TBody>
+          {clients.map((c) => {
+            const bar = bars.get(c.id);
+            const overdue = c.overdue.some((t) => t.amountMinor > 0);
+            const pays = lateLabel(c.avgDaysLate);
+            return (
+              <Tr key={c.id} href={`/clients/${c.id}`} tone={overdue ? "danger" : undefined}>
+                <Td primary>
+                  <span className="block min-w-0">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-ink">{c.name}</span>
+                      {c.replyHeldAt ? (
+                        <span className="shrink-0 rounded-full bg-warn-soft px-1.5 text-[11.5px] leading-5 font-medium text-warn">Replied</span>
+                      ) : null}
+                    </span>
+                    <span className="block truncate text-small font-normal text-ink-3 max-sm:hidden">{c.email}</span>
+                  </span>
+                </Td>
+                <Td numeric primary>
+                  {c.outstanding.some((t) => t.amountMinor > 0) ? (
+                    <span className="inline-block text-right">
+                      <Amounts totals={c.outstanding} />
+                      {bar ? <Bar bar={bar} /> : null}
+                    </span>
+                  ) : (
+                    <span className="text-ink-3 max-sm:hidden">Nothing owed</span>
+                  )}
+                </Td>
+                <Td numeric label="Overdue">
+                  {overdue ? <Amounts totals={c.overdue} tone="danger" /> : null}
+                </Td>
+                <Td label="Pays">
+                  {pays ? <span className={cx("num", c.avgDaysLate !== null && c.avgDaysLate > 14 && "text-warn")}>{pays}</span> : null}
+                </Td>
+                <Td label="Last contact">
+                  {c.lastContactAt ? <span className="num whitespace-nowrap">{dayLabelFor(c.lastContactAt.toISOString(), zone)}</span> : null}
+                </Td>
+              </Tr>
+            );
+          })}
+        </TBody>
+      </Table>
+    </Card>
   );
 }

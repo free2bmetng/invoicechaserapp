@@ -204,6 +204,47 @@ export async function createSequenceAction(_previous: ActionNote, _formData: For
   redirect(`/sequences/${sequenceId}`);
 }
 
+// Copies one of the user's sequences, steps and all, into a new sequence that is never the default,
+// then opens its editor. Preset steps keep their tone, so they still use the preset wording.
+export async function duplicateSequenceAction(_previous: ActionNote, formData: FormData): Promise<ActionNote> {
+  const userId = await requireUserId();
+  const sequenceId = readText(formData, "sequenceId").trim();
+  if (!isUuidText(sequenceId)) return { ok: false, message: "That sequence could not be found." };
+  let newId: string;
+  try {
+    const data = await loadSequenceData(userId, sequenceId);
+    if (!data) return { ok: false, message: "That sequence could not be found." };
+    const saved = await saveSequence(
+      userId,
+      {
+        name: copyName(data.name),
+        kind: data.kind,
+        isDefault: false,
+        steps: data.steps.map((s) => ({
+          offsetDays: s.offsetDays,
+          tone: s.tone,
+          subject: s.subject,
+          body: s.body,
+          requiresApproval: s.requiresApproval,
+          isFinalNotice: s.isFinalNotice,
+        })),
+      },
+      systemClock,
+    );
+    newId = saved.sequenceId;
+  } catch (err) {
+    return { ok: false, message: describeEngineError(err) };
+  }
+  revalidatePath("/", "layout");
+  redirect(`/sequences/${newId}`);
+}
+
+// "Default reminders" becomes "Default reminders (copy)", kept within the 120-character limit.
+function copyName(name: string): string {
+  const suffix = " (copy)";
+  return `${name.slice(0, 120 - suffix.length)}${suffix}`;
+}
+
 export async function makeDefaultSequenceAction(_previous: ActionNote, formData: FormData): Promise<ActionNote> {
   const userId = await requireUserId();
   const sequenceId = readText(formData, "sequenceId").trim();

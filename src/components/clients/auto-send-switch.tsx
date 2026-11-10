@@ -2,16 +2,15 @@
 
 import { useActionState, useState, startTransition } from "react";
 import { setAutoSendAction } from "@/app/actions/clients";
+import { Card, Switch } from "@/components/ui";
 import { IDLE_FORM_STATE } from "@/components/invoices/form-state";
 
-// Turning auto-send on releases only the first-reminder hold. Rows marked for approval still wait.
+// Turning auto-send on releases only the first-reminder hold. Steps marked for approval still wait.
 export function AutoSendSwitch({ clientId, autoSend }: { clientId: string; autoSend: boolean }) {
   const [state, dispatch, pending] = useActionState(setAutoSendAction, IDLE_FORM_STATE);
   const [on, setOn] = useState(autoSend);
-  const shown = pending ? !on : on;
 
-  function toggle() {
-    const next = !shown;
+  function toggle(next: boolean) {
     setOn(next);
     const payload = new FormData();
     payload.set("clientId", clientId);
@@ -20,37 +19,23 @@ export function AutoSendSwitch({ clientId, autoSend }: { clientId: string; autoS
   }
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-start justify-between gap-6">
-        <div className="min-w-0">
-          <p id="autosend-label" className="text-[14px] font-medium text-ink">Send the first reminder without approval</p>
-          <p className="mt-1 text-[13px] leading-5 text-ink-2">
-            {shown
-              ? "On. The first reminder to this client goes out in the send window without waiting for your approval."
-              : "Off. The first reminder to this client waits in Needs you until you approve it."}{" "}
-            Reminders marked for approval always wait.
-          </p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={shown}
-          aria-labelledby="autosend-label"
+    <Card as="section" className="px-4 pt-4 pb-3 sm:px-6 sm:pt-5">
+      <h2 className="text-card-title text-ink">Auto-send</h2>
+      <div className="mt-1">
+        <Switch
+          id="client-autosend"
+          label="Send the first reminder without approval"
+          description={on
+            ? "On. The first reminder goes out in the send window. Steps marked for approval still wait."
+            : "Off. The first reminder waits in Needs you until you approve it."}
+          checked={on}
           disabled={pending}
-          onClick={toggle}
-          className="-m-2 flex h-11 w-16 shrink-0 cursor-pointer items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:opacity-60"
-        >
-          <span
-            aria-hidden="true"
-            className={`relative inline-block h-6 w-11 rounded-full border transition-colors duration-200 ${shown ? "border-accent bg-accent" : "border-line-strong bg-surface-2"}`}
-          >
-            <span className={`absolute top-[3px] left-[3px] h-[18px] w-[18px] rounded-full bg-surface shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-200 ease-out ${shown ? "translate-x-5" : ""}`} />
-          </span>
-        </button>
+          onChange={toggle}
+        />
       </div>
-      <p role="status" aria-live="polite" className={state.ok === false ? "text-[13px] text-danger" : "text-[13px] text-ink-2"}>
+      <p role="status" aria-live="polite" className={state.ok === false ? "text-small text-danger" : "sr-only"}>
         {state.message ?? ""}
       </p>
-    </div>
+    </Card>
   );
 }

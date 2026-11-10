@@ -31,7 +31,8 @@ vi.mock("next/navigation", () => ({
 
 import { closeDb } from "@/lib/db";
 import { listSequences } from "@/lib/engine";
-import { previewStepAction, saveSequenceAction, createSequenceAction, makeDefaultSequenceAction } from "@/app/actions/sequences";
+import { previewStepAction, saveSequenceAction, createSequenceAction, duplicateSequenceAction, makeDefaultSequenceAction } from "@/app/actions/sequences";
+import { sequenceUsage, sequenceUsers } from "@/lib/queries/sequences";
 import { IDLE_SAVE_RESULT } from "@/components/sequences/state";
 import { TONE_PRESETS } from "@/lib/templates";
 import { resetDb } from "../helpers/db";
@@ -306,5 +307,57 @@ describe("previewStepAction", () => {
     expect(outcome.payableLabel).toMatch(/installment 2/);
     expect(outcome.text).toContain("$750.00");
     expect(outcome.text).toContain("15 Jul 2027");
+  });
+});
+
+describe("duplicateSequenceAction", () => {
+  it("copies every step into a new sequence that is not the default, and opens it", async () => {
+    const source = await defaultStandard(owner.userId);
+    const steps = stepsOf(source);
+    // Make the source distinctive: one custom step that waits for approval.
+    steps[0] = { ...steps[0], tone: "custom", subject: "Custom {invoice_number}", body: "Hello {client_name}", requiresApproval: true };
+    const saved = await saveSequenceAction(IDLE_SAVE_RESULT, form({ payload: payload(source.id, { steps }) }));
+    expect(saved.ok).toBe(true);
+
+    let target = "";
+    try {
+      await duplicateSequenceAction({ ok: null, message: null }, form({ sequenceId: source.id }));
+    } catch (err) {
+      target = (err as { url?: string }).url ?? "";
+    }
+    expect(target).toMatch(/^\/sequences\/[0-9a-f-]{36}$/);
+    const copyId = target.split("/").pop()!;
+    expect(copyId).not.toBe(source.id);
+
+    const all = await listSequences(owner.userId);
+    const copy = all.find((s) => s.id === copyId)!;
+    const original = all.find((s) => s.id === source.id)!;
+    expect(copy.name).toBe("Default reminders (copy)");
+    expect(copy.kind).toBe("standard");
+    expect(copy.isDefault).toBe(false);
+    expect(original.isDefault).toBe(true);
+    const shape = (x: typeof copy) =>
+      x.steps.map((st) => ({ o: st.offsetDays, t: st.tone, s: st.subject, b: st.body, a: st.requiresApproval, f: st.isFinalNotice }));
+    expect(shape(copy)).toEqual(shape(original));
+    // The copy has its own step rows.
+    expect(copy.steps.map((st) => st.id).some((id) => original.steps.some((o) => o.id === id))).toBe(false);
+    // Nothing moved to the copy: the default still serves the open invoices.
+    const client = await makeClient(owner.userId);
+    await makeInvoice(owner.userId, client.clientId);
+    const usage = await sequenceUsage(owner.userId);
+    expect(usage.get(source.id)).toBe(1);
+    expect(usage.get(copyId) ?? 0).toBe(0);
+    expect((await sequenceUsers(owner.userId)).get(source.id)?.[0]?.clientName).toBe("Acme Ltd");
+  });
+
+  it("refuses another user's sequence and a malformed id", async () => {
+    const source = await defaultStandard(owner.userId);
+    const other = await makeUser();
+    h.session.userId = other.userId;
+    const state = await duplicateSequenceAction({ ok: null, message: null }, form({ sequenceId: source.id }));
+    expect(state.ok).toBe(false);
+    expect((await duplicateSequenceAction({ ok: null, message: null }, form({ sequenceId: "nope" }))).ok).toBe(false);
+    h.session.userId = null;
+    await expect(duplicateSequenceAction({ ok: null, message: null }, form({ sequenceId: source.id }))).rejects.toMatchObject({ url: "/login" });
   });
 });

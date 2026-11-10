@@ -8,6 +8,7 @@ import { DateTime } from "luxon";
 import { systemClock } from "@/lib/clock";
 import {
   createClient,
+  getClientDetail,
   removeContact,
   resumeClient,
   resumeContact,
@@ -149,6 +150,15 @@ export async function upsertContactAction(_previous: FormState, formData: FormDa
   if (Object.keys(errors).length > 0) return failedState("Check the highlighted fields.", errors, values);
 
   try {
+    // The client's billing email is its primary contact's address. Editing that contact's address
+    // moves the client's email with it, so the two never drift apart.
+    if (contactId) {
+      const detail = await getClientDetail(userId, clientId);
+      const existing = detail.contacts.find((ct) => ct.id === contactId);
+      if (existing?.isPrimary && existing.email === detail.email && email !== existing.email) {
+        await updateClient(userId, clientId, { email }, systemClock);
+      }
+    }
     await upsertContact(
       userId,
       clientId,

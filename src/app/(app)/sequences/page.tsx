@@ -1,11 +1,13 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { Card, EmptyState, PageHeader } from "@/components/ui";
+import { EmptyState, PageHeader } from "@/components/ui";
 import { ListSkeleton } from "@/components/invoices/skeletons";
 import { NewSequenceButton } from "@/components/sequences/sequence-actions";
 import { SequenceCards } from "@/components/sequences/sequence-list";
+import { TimelineLegend } from "@/components/sequences/sequence-timeline";
+import { windowSentence } from "@/components/sequences/state";
 import { listSequences } from "@/lib/engine";
-import { sequenceUsage } from "@/lib/queries/sequences";
+import { sendingProfile, sequenceUsage } from "@/lib/queries/sequences";
 import { requireUserId } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Sequences" };
@@ -15,10 +17,10 @@ export default function SequencesPage() {
     <>
       <PageHeader
         title="Sequences"
-        description="When each reminder goes out, and how many invoices use each sequence."
+        description="When each reminder goes out, in what tone, and which ones wait for you."
         actions={<NewSequenceButton />}
       />
-      <div className="mt-8">
+      <div className="mt-6">
         <Suspense fallback={<ListSkeleton rows={3} />}>
           <SequencesSection />
         </Suspense>
@@ -30,7 +32,7 @@ export default function SequencesPage() {
 // Reads the session and the data, so it sits behind the Suspense boundary above.
 async function SequencesSection() {
   const userId = await requireUserId();
-  const [sequences, usage] = await Promise.all([listSequences(userId), sequenceUsage(userId)]);
+  const [sequences, usage, profile] = await Promise.all([listSequences(userId), sequenceUsage(userId), sendingProfile(userId)]);
   if (sequences.length === 0) {
     return (
       <EmptyState
@@ -44,24 +46,28 @@ async function SequencesSection() {
   const plans = sequences.filter((s) => s.kind === "plan");
   return (
     <div className="grid gap-8">
-      <section aria-labelledby="standard-heading" className="grid gap-4">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <TimelineLegend />
+        <p className="text-small text-ink-3">{windowSentence(profile.windowStart, profile.windowEnd)}</p>
+      </div>
+      <section aria-labelledby="standard-heading" className="grid gap-3">
         <div>
-          <h2 id="standard-heading" className="text-[16px] font-semibold text-ink">Reminder sequences</h2>
-          <p className="mt-1 text-[13px] leading-5 text-ink-3">Used for open invoices. An invoice or client can choose its own.</p>
+          <h2 id="standard-heading" className="text-section-title text-ink">Reminder sequences</h2>
+          <p className="mt-0.5 text-small text-ink-3">For open invoices. Days count from each invoice&apos;s due date. A client or an invoice can pick its own.</p>
         </div>
         {standard.length === 0 ? (
-          <Card as="section" className="p-5 text-[14px] text-ink-2">There are no reminder sequences. Make one to schedule reminders.</Card>
+          <p className="rounded-[var(--radius-lg)] border border-dashed border-line-strong p-5 text-body text-ink-2">There are no reminder sequences. Make one to schedule reminders.</p>
         ) : (
           <SequenceCards sequences={standard} usage={usage} />
         )}
       </section>
-      <section aria-labelledby="plan-heading" className="grid gap-4">
+      <section aria-labelledby="plan-heading" className="grid gap-3">
         <div>
-          <h2 id="plan-heading" className="text-[16px] font-semibold text-ink">Payment plan sequences</h2>
-          <p className="mt-1 text-[13px] leading-5 text-ink-3">Used for each installment of a payment plan. Offsets are relative to each installment&apos;s due date.</p>
+          <h2 id="plan-heading" className="text-section-title text-ink">Payment plan sequences</h2>
+          <p className="mt-0.5 text-small text-ink-3">For each installment of a payment plan. Days count from the installment&apos;s due date. Plans use the default.</p>
         </div>
         {plans.length === 0 ? (
-          <Card as="section" className="p-5 text-[14px] text-ink-2">No payment plan sequence yet. One is created with the default plan.</Card>
+          <p className="rounded-[var(--radius-lg)] border border-dashed border-line-strong p-5 text-body text-ink-2">No payment plan sequence yet. One is created with the default plan.</p>
         ) : (
           <SequenceCards sequences={plans} usage={usage} />
         )}

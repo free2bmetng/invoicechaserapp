@@ -8,9 +8,19 @@ import { dueDateLabel } from "@/components/invoices/format";
 
 export type SequenceKind = "standard" | "plan";
 
-// How many open invoices use each standard sequence, following the precedence in engine/store.ts:
-// invoice override, then client, then the default. Plan sequences: payment plan invoices use the default.
-export async function sequenceUsage(userId: string): Promise<Map<string, number>> {
+// The open invoices that use each sequence, following the precedence in engine/store.ts: invoice
+// override, then client, then the default. Plan sequences: payment plan invoices use the default.
+export interface SequenceUser {
+  invoiceId: string;
+  invoiceNumber: string;
+  clientName: string;
+  dueDate: string;
+  amountMinor: number;
+  currency: string;
+  status: "open" | "payment_plan";
+}
+
+export async function sequenceUsers(userId: string): Promise<Map<string, SequenceUser[]>> {
   return withUser(userId, async (c) => {
     const seqs = await c.query<{ id: string; kind: SequenceKind; is_default: boolean }>(
       "select id, kind, is_default from sequences where user_id = $1",
@@ -20,27 +30,67 @@ export async function sequenceUsage(userId: string): Promise<Map<string, number>
     const defaultStandard = seqs.rows.find((s) => s.kind === "standard" && s.is_default)?.id ?? null;
     const defaultPlan = seqs.rows.find((s) => s.kind === "plan" && s.is_default)?.id ?? null;
 
-    const clients = await c.query<{ id: string; sequence_id: string | null }>(
-      "select id, sequence_id from clients where user_id = $1",
+    const invoices = await c.query<{
+      id: string; invoice_number: string; client_name: string; due_date: string; amount: string; currency: string;
+      sequence_id: string | null; client_sequence_id: string | null; status: "open" | "payment_plan";
+    }>(
+      `select i.id, i.invoice_number, cl.name as client_name, i.due_date::text as due_date, i.amount_minor::text as amount,
+         i.currency, i.sequence_id, cl.sequence_id as client_sequence_id, i.status
+       from invoices i join clients cl on cl.id = i.client_id and cl.user_id = i.user_id
+       where i.user_id = $1 and i.status in ('open', 'payment_plan')
+       order by i.due_date, i.invoice_number`,
       [userId],
     );
-    const clientSeq = new Map(clients.rows.map((r) => [r.id, r.sequence_id]));
-
-    const invoices = await c.query<{ client_id: string; sequence_id: string | null; status: string }>(
-      "select client_id, sequence_id, status from invoices where user_id = $1 and status in ('open', 'payment_plan')",
-      [userId],
-    );
-    const counts = new Map<string, number>();
+    const users = new Map<string, SequenceUser[]>();
     for (const inv of invoices.rows) {
-      if (inv.status === "payment_plan") {
-        if (defaultPlan) counts.set(defaultPlan, (counts.get(defaultPlan) ?? 0) + 1);
-        continue;
-      }
-      const candidates = [inv.sequence_id, clientSeq.get(inv.client_id) ?? null];
-      const effective = candidates.find((id): id is string => id !== null && standard.has(id)) ?? defaultStandard;
-      if (effective) counts.set(effective, (counts.get(effective) ?? 0) + 1);
+      const effective = inv.status === "payment_plan"
+        ? defaultPlan
+        : ([inv.sequence_id, inv.client_sequence_id].find((id): id is string => id !== null && standard.has(id)) ?? defaultStandard);
+      if (!effective) continue;
+      const list = users.get(effective) ?? [];
+      list.push({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoice_number,
+        clientName: inv.client_name,
+        dueDate: inv.due_date,
+        amountMinor: Number(inv.amount),
+        currency: inv.currency,
+        status: inv.status,
+      });
+      users.set(effective, list);
     }
-    return counts;
+    return users;
+  });
+}
+
+// How many open invoices use each sequence (see sequenceUsers).
+export async function sequenceUsage(userId: string): Promise<Map<string, number>> {
+  const users = await sequenceUsers(userId);
+  return new Map([...users].map(([id, list]) => [id, list.length]));
+}
+
+// Who a reminder comes from, and when reminders may send. Shown on the sequence screens.
+export interface SendingProfile {
+  fromName: string;
+  fromAddress: string | null;
+  windowStart: number;
+  windowEnd: number;
+}
+
+export async function sendingProfile(userId: string): Promise<SendingProfile> {
+  return withUser(userId, async (c) => {
+    const { rows } = await c.query<{ sender_name: string; business_name: string; sending_domain: string | null; send_window_start: number; send_window_end: number }>(
+      "select sender_name, business_name, sending_domain, send_window_start, send_window_end from settings where user_id = $1",
+      [userId],
+    );
+    const r = rows[0];
+    const name = [r?.sender_name?.trim(), r?.business_name?.trim()].filter(Boolean).join(", ");
+    return {
+      fromName: name || "Your name",
+      fromAddress: r?.sending_domain ? `invoices@${r.sending_domain}` : null,
+      windowStart: r?.send_window_start ?? 9,
+      windowEnd: r?.send_window_end ?? 17,
+    };
   });
 }
 
@@ -86,6 +136,9 @@ export type PreviewOutcome =
       placeholderSender: boolean;
       stripeConnected: boolean;
       payableLabel: string;
+      // The envelope, for the email-client frame around the preview.
+      to: string;
+      from: string;
     }
   | { ok: false; errors: string[] };
 
@@ -151,6 +204,8 @@ export async function renderStepPreview(args: PreviewArgs): Promise<PreviewOutco
       placeholderSender: !complete,
       stripeConnected: workspace.stripeConnected,
       payableLabel: payable.label,
+      to: payable.clientEmail,
+      from: [sender.senderName, sender.businessName].filter((v) => v.trim() !== "").join(", "),
     };
   } catch (err) {
     if (err instanceof MessageError) return { ok: false, errors: [err.message] };
@@ -160,6 +215,7 @@ export async function renderStepPreview(args: PreviewArgs): Promise<PreviewOutco
 
 interface PayableRow {
   clientName: string;
+  clientEmail: string;
   clientTimezone: string | null;
   invoiceNumber: string;
   amountMinor: number;
@@ -172,10 +228,10 @@ async function loadPayable(userId: string, kind: SequenceKind, payableId: string
   return withUser(userId, async (c) => {
     if (kind === "standard") {
       const { rows } = await c.query<{
-        invoice_number: string; amount: string; currency: string; due_date: string; client_name: string; client_timezone: string | null;
+        invoice_number: string; amount: string; currency: string; due_date: string; client_name: string; client_email: string; client_timezone: string | null;
       }>(
         `select i.invoice_number, i.amount_minor::text as amount, i.currency, i.due_date::text as due_date,
-           cl.name as client_name, cl.timezone as client_timezone
+           cl.name as client_name, cl.email as client_email, cl.timezone as client_timezone
          from invoices i join clients cl on cl.id = i.client_id
          where i.id = $1 and i.user_id = $2`,
         [payableId, userId],
@@ -184,6 +240,7 @@ async function loadPayable(userId: string, kind: SequenceKind, payableId: string
       if (!r) return null;
       return {
         clientName: r.client_name,
+        clientEmail: r.client_email,
         clientTimezone: r.client_timezone,
         invoiceNumber: r.invoice_number,
         amountMinor: Number(r.amount),
@@ -193,10 +250,10 @@ async function loadPayable(userId: string, kind: SequenceKind, payableId: string
       };
     }
     const { rows } = await c.query<{
-      invoice_number: string; position: number; amount: string; currency: string; due_date: string; client_name: string; client_timezone: string | null;
+      invoice_number: string; position: number; amount: string; currency: string; due_date: string; client_name: string; client_email: string; client_timezone: string | null;
     }>(
       `select i.invoice_number, p.position, p.amount_minor::text as amount, p.currency, p.due_date::text as due_date,
-         cl.name as client_name, cl.timezone as client_timezone
+         cl.name as client_name, cl.email as client_email, cl.timezone as client_timezone
        from payment_plan_installments p
          join invoices i on i.id = p.invoice_id and i.user_id = p.user_id
          join clients cl on cl.id = i.client_id
@@ -207,6 +264,7 @@ async function loadPayable(userId: string, kind: SequenceKind, payableId: string
     if (!r) return null;
     return {
       clientName: r.client_name,
+      clientEmail: r.client_email,
       clientTimezone: r.client_timezone,
       invoiceNumber: r.invoice_number,
       amountMinor: Number(r.amount),

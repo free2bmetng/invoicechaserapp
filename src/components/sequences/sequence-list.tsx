@@ -1,45 +1,78 @@
-// The sequences list. Server-rendered: each card links to its editor.
+// The sequences list. Server-rendered: each sequence is a row with its day-by-day timeline, how
+// many open invoices use it (a link to them), and its actions.
 import Link from "next/link";
-import { Badge } from "@/components/ui";
+import { Badge, Card, buttonClass } from "@/components/ui";
 import type { SequenceView } from "@/lib/engine";
+import type { Tone } from "@/lib/types";
 import { describeCadence } from "./state";
-import { MakeDefaultButton } from "./sequence-actions";
+import { DuplicateButton, MakeDefaultButton } from "./sequence-actions";
+import { SequenceTimeline } from "./sequence-timeline";
+
+export function usageText(count: number, kind: "standard" | "plan", isDefault: boolean): string {
+  if (kind === "plan") {
+    if (!isDefault) return "Not in use. Payment plans use the default plan sequence";
+    return count === 0 ? "No payment plans yet" : `Used by ${count} ${count === 1 ? "payment plan" : "payment plans"}`;
+  }
+  return count === 0 ? "Not used by any open invoice" : `Used by ${count} open ${count === 1 ? "invoice" : "invoices"}`;
+}
 
 export function SequenceCards({ sequences, usage }: { sequences: SequenceView[]; usage: Map<string, number> }) {
   return (
-    <ul aria-label="Sequences" className="grid gap-4">
-      {sequences.map((s) => {
-        const count = usage.get(s.id) ?? 0;
-        const isPlan = s.kind === "plan";
-        const offsets = s.steps.map((x) => x.offsetDays);
-        return (
-          <li key={s.id} className="grid gap-4 rounded-[var(--radius-lg)] border border-line bg-surface p-5 shadow-card sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-6">
-            <div className="grid min-w-0 gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Link href={`/sequences/${s.id}`} className="inline-flex min-h-11 items-center text-[16px] font-semibold text-ink underline-offset-4 hover:underline sm:min-h-0">
-                  {s.name}
-                </Link>
-                {s.isDefault ? <Badge tone="accent">Default</Badge> : null}
+    <Card className="overflow-hidden">
+      <ul aria-label="Sequences">
+        {sequences.map((s) => {
+          const count = usage.get(s.id) ?? 0;
+          const approvals = s.steps.filter((x) => x.requiresApproval).length;
+          return (
+            <li key={s.id} className="grid gap-4 border-b border-line px-4 py-4 last:border-b-0 sm:px-6 sm:py-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-x-8 lg:gap-y-3">
+              <div className="grid min-w-0 content-start gap-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link href={`/sequences/${s.id}`} className="text-card-title text-ink underline-offset-4 hover:underline">
+                    {s.name}
+                  </Link>
+                  {s.isDefault ? <Badge tone="accent">Default</Badge> : null}
+                </div>
+                <p className="text-small text-ink-2">
+                  <span className="num">{s.steps.length}</span> {s.steps.length === 1 ? "step" : "steps"}
+                  {approvals > 0 ? <> · <span className="num">{approvals}</span> {approvals === 1 ? "waits" : "wait"} for approval</> : null}
+                </p>
+                <p className="text-small">
+                  {count > 0 ? (
+                    <Link href={`/sequences/${s.id}#used-by`} className="font-medium text-accent underline-offset-4 hover:underline">
+                      {usageText(count, s.kind, s.isDefault)}
+                    </Link>
+                  ) : (
+                    <span className="text-ink-3">{usageText(count, s.kind, s.isDefault)}</span>
+                  )}
+                </p>
               </div>
-              <p className="text-[13.5px] leading-6 text-ink-2">{describeCadence(offsets, s.kind)}</p>
-              <p className="num text-[13px] text-ink-3">
-                {isPlan
-                  ? `${count} payment ${count === 1 ? "plan uses" : "plans use"} the default`
-                  : `${count} open ${count === 1 ? "invoice uses" : "invoices use"} this sequence`}
-              </p>
-            </div>
-            <div className="grid justify-items-start gap-3 sm:justify-items-end">
-              <Link
-                href={`/sequences/${s.id}`}
-                className="inline-flex h-11 items-center rounded-[10px] border border-line-strong bg-surface px-4 text-[14px] font-medium text-ink shadow-card hover:border-ink-3 hover:bg-surface-2 sm:h-9 sm:px-3.5 sm:text-[13.5px]"
-              >
-                Edit
-              </Link>
-              {s.isDefault ? null : <MakeDefaultButton sequenceId={s.id} />}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+              <div className="grid min-w-0 content-start gap-3 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:pt-1">
+                {s.steps.length === 0 ? (
+                  <p className="text-body text-ink-2">No steps, so nothing is sent with this sequence.</p>
+                ) : (
+                  <>
+                    <SequenceTimeline
+                      kind={s.kind}
+                      steps={s.steps.map((x) => ({
+                        offsetDays: x.offsetDays,
+                        tone: x.tone as Tone,
+                        requiresApproval: x.requiresApproval,
+                        isFinalNotice: x.isFinalNotice,
+                      }))}
+                    />
+                    <p className="text-small text-ink-3">{describeCadence(s.steps.map((x) => x.offsetDays), s.kind)}</p>
+                  </>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1 lg:col-start-1 lg:row-start-2">
+                <Link href={`/sequences/${s.id}`} className={buttonClass("secondary", "sm")} aria-label={`Edit ${s.name}`}>Edit</Link>
+                <DuplicateButton sequenceId={s.id} name={s.name} />
+                {s.isDefault ? null : <MakeDefaultButton sequenceId={s.id} name={s.name} />}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

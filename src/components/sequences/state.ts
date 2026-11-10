@@ -143,7 +143,8 @@ export function describeCadence(offsets: number[], kind: "standard" | "plan"): s
   if (before.length > 0) parts.push(`${numberList(before)} ${before.length === 1 && before[0] === 1 ? "day" : "days"} before ${anchor}`);
   if (onDue) parts.push(kind === "plan" ? "on the installment due date" : "on the due date");
   if (after.length > 0) parts.push(`${numberList(after)} ${after.length === 1 && after[0] === 1 ? "day" : "days"} after ${anchor}`);
-  return parts.join(" · ");
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // The saved payload for the editor. The same function builds the baseline, so "unsaved changes" is an exact comparison.
@@ -173,4 +174,50 @@ export function sendsPhrase(offsetText: string, kind: "standard" | "plan"): stri
   if (n === 0) return `sends on ${anchor}`;
   const days = Math.abs(n);
   return `sends ${days} ${days === 1 ? "day" : "days"} ${n < 0 ? "before" : "after"} ${anchor}`;
+}
+
+// ── Display helpers for the timeline and the step table ──
+
+// Tone escalates friendly → neutral → firm. Custom wording is grey; the final notice is always red.
+export const TONE_FILL: Record<Tone, string> = {
+  friendly: "bg-ok-fill",
+  neutral: "bg-info-fill",
+  firm: "bg-warn-fill",
+  custom: "bg-neutral-fill",
+};
+export const TONE_BORDER: Record<Tone, string> = {
+  friendly: "border-ok-fill",
+  neutral: "border-info-fill",
+  firm: "border-warn-fill",
+  custom: "border-neutral-fill",
+};
+
+// A step's dot: filled when it sends by itself, hollow (a ring) when it waits for approval.
+export function dotClass(tone: Tone, isFinalNotice: boolean, requiresApproval: boolean): string {
+  const fill = isFinalNotice ? "bg-danger-fill" : TONE_FILL[tone];
+  const border = isFinalNotice ? "border-danger-fill" : TONE_BORDER[tone];
+  return requiresApproval ? `border-2 ${border} bg-surface` : `border-2 ${border} ${fill}`;
+}
+
+// "−3d", "Due", "+7d": the narrow day column.
+export function dayBadge(offset: number | null): string {
+  if (offset === null) return "?";
+  if (offset === 0) return "Due";
+  return offset < 0 ? `\u2212${Math.abs(offset)}d` : `+${offset}d`;
+}
+
+export type Phase = "before" | "due" | "overdue";
+export function phaseOf(offset: number | null): Phase {
+  if (offset === null || offset < 0) return "before";
+  return offset === 0 ? "due" : "overdue";
+}
+export function phaseLabel(phase: Phase, kind: "standard" | "plan"): string {
+  if (phase === "before") return kind === "plan" ? "Before the installment is due" : "Before due";
+  if (phase === "due") return kind === "plan" ? "On the installment due date" : "On the due date";
+  return "Overdue";
+}
+
+// "Sends 9:00–17:00 in each client's timezone, every day."
+export function windowSentence(start: number, end: number): string {
+  return `Reminders send between ${start}:00 and ${end}:00 in each client's timezone.`;
 }

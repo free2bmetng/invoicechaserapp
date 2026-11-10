@@ -1,23 +1,39 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { PageHeader } from "@/components/ui";
+import { Badge, Card, PageHeader } from "@/components/ui";
+import { Table, TBody, THead, Td, Th, Tr } from "@/components/data";
+import { Money } from "@/components/money";
+import { BackLink } from "@/components/invoices/back-link";
 import { DetailSkeleton } from "@/components/invoices/skeletons";
-import { SequenceEditor } from "@/components/sequences/sequence-editor";
+import { dueDateLabel } from "@/components/invoices/format";
 import { isUuidText } from "@/components/invoices/form-state";
+import { SequenceEditor } from "@/components/sequences/sequence-editor";
+import { DuplicateButton, MakeDefaultButton } from "@/components/sequences/sequence-actions";
+import { usageText } from "@/components/sequences/sequence-list";
+import { windowSentence } from "@/components/sequences/state";
 import { listSequences } from "@/lib/engine";
-import { previewChoices, sequenceUsage } from "@/lib/queries/sequences";
+import { previewChoices, sendingProfile, sequenceUsers } from "@/lib/queries/sequences";
 import { loadWorkspace } from "@/lib/queries/invoices";
-import { requireUserId } from "@/lib/session";
+import { getUserId, requireUserId } from "@/lib/session";
 
-export const metadata: Metadata = { title: "Sequence" };
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  if (!isUuidText(id)) return { title: "Sequence not found" };
+  const userId = await getUserId();
+  if (!userId) return { title: "Sequence" };
+  const found = (await listSequences(userId)).find((s) => s.id === id);
+  return { title: found ? found.name : "Sequence not found" };
+}
 
 export default function SequenceEditorPage({ params }: { params: Promise<{ id: string }> }) {
   return (
-    <Suspense fallback={<DetailSkeleton />}>
-      <SequenceEditorSection params={params} />
-    </Suspense>
+    <>
+      <BackLink href="/sequences">Sequences</BackLink>
+      <Suspense fallback={<DetailSkeleton />}>
+        <SequenceEditorSection params={params} />
+      </Suspense>
+    </>
   );
 }
 
@@ -29,24 +45,31 @@ async function SequenceEditorSection({ params }: { params: Promise<{ id: string 
   const found = all.find((s) => s.id === id);
   if (!found) notFound();
 
-  const [choices, usage, workspace] = await Promise.all([
+  const [choices, users, workspace, profile] = await Promise.all([
     previewChoices(userId, found.kind),
-    sequenceUsage(userId),
+    sequenceUsers(userId),
     loadWorkspace(userId),
+    sendingProfile(userId),
   ]);
+  const used = users.get(found.id) ?? [];
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="mb-3 text-[13px] text-ink-3">
-        <Link href="/sequences" className="hover:text-ink">Sequences</Link>
-        <span aria-hidden="true"> / </span>
-        <span className="text-ink-2">{found.name}</span>
-      </nav>
       <PageHeader
         title={found.name}
-        description={found.kind === "plan" ? "Reminders for each installment of a payment plan." : "Reminders for open invoices, in order of their offset from the due date."}
+        description={
+          found.kind === "plan"
+            ? "Reminders for each installment of a payment plan, counted from the installment's due date."
+            : "Reminders for open invoices, counted from each invoice's due date."
+        }
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {found.isDefault ? <Badge tone="accent">Default</Badge> : <MakeDefaultButton sequenceId={found.id} name={found.name} />}
+            <DuplicateButton sequenceId={found.id} name={found.name} variant="secondary" />
+          </div>
+        }
       />
-      <div className="mt-8">
+      <div className="mt-6">
         <SequenceEditor
           sequence={{
             id: found.id,
@@ -64,10 +87,42 @@ async function SequenceEditorSection({ params }: { params: Promise<{ id: string 
             })),
           }}
           choices={choices}
-          usage={usage.get(found.id) ?? 0}
           stripeConnected={workspace.stripeConnected}
+          fromAddress={profile.fromAddress}
+          windowText={windowSentence(profile.windowStart, profile.windowEnd)}
         />
       </div>
+
+      <section id="used-by" aria-labelledby="used-by-heading" className="mt-8 grid scroll-mt-6 gap-3">
+        <div>
+          <h2 id="used-by-heading" className="text-section-title text-ink">
+            Used by <span className="num ml-1 text-body font-normal text-ink-3">{used.length}</span>
+          </h2>
+          <p className="mt-0.5 text-small text-ink-3">{usageText(used.length, found.kind, found.isDefault)}. Saving re-plans their unsent reminders.</p>
+        </div>
+        {used.length > 0 ? (
+          <Card className="overflow-hidden">
+            <Table label="Open invoices that use this sequence">
+              <THead>
+                <Th>Invoice</Th>
+                <Th>Client</Th>
+                <Th>Due</Th>
+                <Th align="right">Amount</Th>
+              </THead>
+              <TBody>
+                {used.map((u) => (
+                  <Tr key={u.invoiceId} href={`/invoices/${u.invoiceId}`}>
+                    <Td primary>{u.invoiceNumber}</Td>
+                    <Td label="Client">{u.clientName}</Td>
+                    <Td label="Due"><span className="num whitespace-nowrap">{dueDateLabel(u.dueDate)}</span></Td>
+                    <Td numeric primary><Money minor={u.amountMinor} currency={u.currency} /></Td>
+                  </Tr>
+                ))}
+              </TBody>
+            </Table>
+          </Card>
+        ) : null}
+      </section>
     </>
   );
 }

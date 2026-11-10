@@ -29,7 +29,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { closeDb } from "@/lib/db";
-import { recordReply } from "@/lib/engine";
+import { listClients, recordReply, type ClientListItem } from "@/lib/engine";
+import { filterClients, loadClientFigures, outstandingBars, parseClientSort, sortClients } from "@/app/(app)/clients/client-data";
 import {
   createClientAction,
   removeContactAction,
@@ -310,5 +311,107 @@ describe("saveClientContactsAction", () => {
     expect(await scalar("select name from contacts where id = $1", [client.contactId])).toBe("Accounts");
     expect(await scalar("select count(*)::text from events where type = 'contact_updated' and detail->>'contact_id' = $1", [secondId])).toBe("0");
     expect(await scalar("select count(*)::text from contacts where client_id = $1 and email = 'new@acme.test'", [client.clientId])).toBe("1");
+  });
+});
+
+function listItem(name: string, extra: Partial<ClientListItem> = {}): ClientListItem {
+  return {
+    id: name, name, email: `${name.toLowerCase()}@example.test`, timezone: null, sequenceId: null, autoSend: false, replyHeldAt: null,
+    contactCount: 1, outstanding: [], overdue: [], lastContactAt: null, averageDaysToPay: null, avgDaysLate: null, ...extra,
+  };
+}
+
+describe("clients list sorting and search", () => {
+  const rows = [
+    listItem("Bravo", { outstanding: [{ currency: "USD", amountMinor: 5000 }], overdue: [{ currency: "USD", amountMinor: 1000 }], avgDaysLate: 3, lastContactAt: new Date("2026-11-01T10:00:00Z") }),
+    listItem("alpha", { outstanding: [{ currency: "GBP", amountMinor: 9000 }], overdue: [], avgDaysLate: null }),
+    listItem("Charlie", { outstanding: [{ currency: "USD", amountMinor: 2000 }], overdue: [{ currency: "USD", amountMinor: 2000 }], avgDaysLate: 30, lastContactAt: new Date("2026-11-09T10:00:00Z") }),
+    listItem("Delta"),
+  ];
+  const names = (list: ClientListItem[]) => list.map((c) => c.name);
+
+  it("sorts by each column, keeps clients without a value last, and breaks ties by name", () => {
+    expect(names(sortClients(rows, "overdue", "desc"))).toEqual(["Charlie", "Bravo", "alpha", "Delta"]);
+    expect(names(sortClients(rows, "outstanding", "desc"))).toEqual(["alpha", "Bravo", "Charlie", "Delta"]);
+    expect(names(sortClients(rows, "name", "asc"))).toEqual(["alpha", "Bravo", "Charlie", "Delta"]);
+    expect(names(sortClients(rows, "name", "desc"))).toEqual(["Delta", "Charlie", "Bravo", "alpha"]);
+    expect(names(sortClients(rows, "pays", "desc"))).toEqual(["Charlie", "Bravo", "alpha", "Delta"]);
+    expect(names(sortClients(rows, "pays", "asc"))).toEqual(["Bravo", "Charlie", "alpha", "Delta"]);
+    expect(names(sortClients(rows, "contact", "desc"))).toEqual(["Charlie", "Bravo", "alpha", "Delta"]);
+    expect(names(sortClients(rows, "contact", "asc"))).toEqual(["Bravo", "Charlie", "alpha", "Delta"]);
+    // The input is not changed.
+    expect(names(rows)).toEqual(["Bravo", "alpha", "Charlie", "Delta"]);
+  });
+
+  it("reads the sort from the query string with a sensible default direction", () => {
+    expect(parseClientSort(undefined, undefined)).toEqual({ key: "overdue", dir: "desc" });
+    expect(parseClientSort("name", undefined)).toEqual({ key: "name", dir: "asc" });
+    expect(parseClientSort("contact", "asc")).toEqual({ key: "contact", dir: "asc" });
+    expect(parseClientSort("drop table", "sideways")).toEqual({ key: "overdue", dir: "desc" });
+  });
+
+  it("searches names and emails, and sizes each outstanding bar within its currency", () => {
+    expect(names(filterClients(rows, "CHAR"))).toEqual(["Charlie"]);
+    expect(names(filterClients(rows, "delta@"))).toEqual(["Delta"]);
+    expect(names(filterClients(rows, "  "))).toHaveLength(4);
+    const bars = outstandingBars(rows);
+    expect(bars.get("Bravo")).toMatchObject({ currency: "USD", share: 1, overdueMinor: 1000 });
+    expect(bars.get("Charlie")?.share).toBeCloseTo(0.4);
+    expect(bars.get("alpha")?.share).toBe(1);
+    expect(bars.has("Delta")).toBe(false);
+  });
+
+  it("sorts the real list from listClients by overdue amount", async () => {
+    const small = await makeClient(owner.userId, { name: "Small Co" });
+    const big = await makeClient(owner.userId, { name: "Big Co" });
+    await makeInvoice(owner.userId, small.clientId, { amountMinor: 10000, due: "2026-10-01" });
+    await makeInvoice(owner.userId, big.clientId, { amountMinor: 90000, due: "2026-10-01" });
+    await makeClient(owner.userId, { name: "Quiet Co" });
+    const list = await listClients(owner.userId, clock);
+    expect(names(sortClients(list, "overdue", "desc"))).toEqual(["Big Co", "Small Co", "Quiet Co"]);
+  });
+});
+
+describe("client header figures", () => {
+  it("reports outstanding, overdue, how late the client pays, and the last reply", async () => {
+    const client = await makeClient(owner.userId, { name: "Figures Ltd" });
+    await makeInvoice(owner.userId, client.clientId, { amountMinor: 50000, due: "2026-10-01" });
+    await makeInvoice(owner.userId, client.clientId, { amountMinor: 20000, due: "2027-01-15" });
+    await makeInvoice(owner.userId, client.clientId, { amountMinor: 30000, issue: "2026-10-01", due: "2026-10-20", status: "paid" });
+
+    const before = await loadClientFigures(owner.userId, client.clientId, clock);
+    expect(before).not.toBeNull();
+    expect(before!.outstanding).toEqual([{ currency: "USD", amountMinor: 70000 }]);
+    expect(before!.overdue).toEqual([{ currency: "USD", amountMinor: 50000 }]);
+    // Paid on 10 Nov, due 20 Oct: 21 days late. 40 days from issue.
+    expect(before!.avgDaysLate).toBe(21);
+    expect(before!.averageDaysToPay).toBe(40);
+    expect(before!.lastReplyAt).toBeNull();
+
+    await recordReply({ userId: owner.userId, clientId: client.clientId, clock });
+    const after = await loadClientFigures(owner.userId, client.clientId, clock);
+    expect(after!.lastReplyAt?.toISOString()).toBe("2026-11-10T12:00:00.000Z");
+  });
+
+  it("shows nothing owed and no history for a new client, and nothing for another user's client", async () => {
+    const client = await makeClient(owner.userId);
+    const figures = await loadClientFigures(owner.userId, client.clientId, clock);
+    expect(figures).toMatchObject({ outstanding: [], overdue: [], avgDaysLate: null, lastReplyAt: null, lastContactAt: null });
+    const other = await makeUser();
+    expect(await loadClientFigures(other.userId, client.clientId, clock)).toBeNull();
+  });
+});
+
+describe("editing the primary contact", () => {
+  it("moves the client's email with the primary contact's address", async () => {
+    const client = await makeClient(owner.userId, { email: "old@acme.test" });
+    const state = await upsertContactAction(
+      IDLE_FORM_STATE,
+      form({ clientId: client.clientId, contactId: client.contactId, name: "Accounts", email: "new@acme.test", isPrimary: "on" }),
+    );
+    expect(state.ok).toBe(true);
+    expect(await scalar("select email from clients where id = $1", [client.clientId])).toBe("new@acme.test");
+    expect(await scalar("select email from contacts where id = $1", [client.contactId])).toBe("new@acme.test");
+    expect(await scalar("select name from contacts where id = $1", [client.contactId])).toBe("Accounts");
   });
 });
