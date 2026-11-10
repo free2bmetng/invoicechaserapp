@@ -1,25 +1,20 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { confirmSequenceReviewAction } from "@/app/actions/settings";
-import { Button, PageHeader } from "@/components/ui";
-import { SettingsCard } from "@/components/settings/form-kit";
-import { LinkButton, OnboardingProgress, SequenceSummary } from "@/components/settings/onboarding-steps";
+import { Button, buttonClass, Card, cx } from "@/components/ui";
+import { OnboardingStepHeader, SequenceSummary, STEP_COPY } from "@/components/settings/onboarding-steps";
 import { CardsSkeleton } from "@/components/settings/skeleton";
 import { getSettingsView, onboardingSteps } from "@/lib/queries/settings";
 import { requireUserId } from "@/lib/session";
 
+export const metadata: Metadata = { title: "Default reminders · Set up" };
+
 export default function OnboardingReviewPage() {
   return (
-    <>
-      <PageHeader
-        eyebrow="Setup · Step 4 of 4"
-        title="Review the default reminders"
-        description="Every new invoice gets these reminders unless you choose a different sequence."
-      />
-      <Suspense fallback={<CardsSkeleton cards={2} />}>
-        <ReviewStep />
-      </Suspense>
-    </>
+    <Suspense fallback={<CardsSkeleton cards={2} />}>
+      <ReviewStep />
+    </Suspense>
   );
 }
 
@@ -29,46 +24,33 @@ async function ReviewStep() {
   const view = await getSettingsView(userId);
 
   return (
-    <div className="mt-8 flex flex-col gap-6">
-      <OnboardingProgress steps={onboardingSteps(view)} current="review" />
-      <div>
-        <SettingsCard
-          id="default-sequence"
-          title="Default reminders"
-          description={
-            <p>
-              Check the timing and the wording. The first reminder to each new client waits for your approval unless
-              auto-send is on for that client.
-            </p>
-          }
-        >
-          <div className="flex flex-col gap-6">
-            <SequenceSummary steps={view.steps} />
-            <div className="flex flex-wrap gap-3">
-              <LinkButton href="/sequences">Edit reminders</LinkButton>
-            </div>
-
-            <form
-              action={confirmSequenceReviewAction}
-              className="flex flex-col gap-3 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <p className="text-[13.5px] leading-6 text-ink-2">
-                {view.sequenceReviewed
-                  ? "You have marked these reminders as reviewed. You can change them at any time."
-                  : "Mark them as reviewed to complete this step."}
-              </p>
-              <Button type="submit" variant="primary" className="w-full sm:w-auto">
-                I have reviewed these reminders
-              </Button>
-            </form>
-          </div>
-        </SettingsCard>
-      </div>
-      <p className="text-[13.5px] leading-6 text-ink-3">
-        <Link className="underline underline-offset-4 hover:text-ink" href="/onboarding">
-          Back to setup
+    <div className="flex max-w-3xl flex-col gap-6">
+      <OnboardingStepHeader
+        step="review"
+        steps={onboardingSteps(view)}
+        title={STEP_COPY.review.title}
+        description="Every new invoice follows these unless you pick another sequence. The first reminder to a new client waits for your approval."
+      />
+      <Card className="overflow-hidden">
+        <SequenceSummary steps={view.steps} />
+      </Card>
+      <form action={confirmSequenceReviewAction} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        {view.sequenceReviewed ? (
+          <>
+            <Link href="/onboarding" className={cx(buttonClass("primary"), "max-sm:w-full")}>
+              Back to the checklist
+            </Link>
+            <p className="text-small text-ok">Marked as reviewed.</p>
+          </>
+        ) : (
+          <Button type="submit" variant="primary" className="max-sm:w-full">
+            Looks good, continue
+          </Button>
+        )}
+        <Link href="/sequences" className={cx(buttonClass("ghost"), "max-sm:w-full")}>
+          Edit reminders
         </Link>
-      </p>
+      </form>
     </div>
   );
 }

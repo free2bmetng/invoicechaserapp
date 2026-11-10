@@ -1,24 +1,35 @@
 "use client";
 
-// Passkey sign-in on the login screen. It renders nothing where the browser has no WebAuthn support,
-// so the email link stays the only option there.
+// Passkey sign-in on the login screen: the primary way in. The login form renders it only where the
+// browser supports WebAuthn, and keeps it on screen through email errors, so the user always has both
+// ways in. While the device prompt is open the button is aria-disabled rather than disabled, so focus
+// stays on it, and an error is announced next to it.
 import { startAuthentication, type PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
 import { useState } from "react";
-import { isCancelled, usePasskeySupport } from "@/components/passkey/add-passkey";
+import { isCancelled } from "@/components/passkey/add-passkey";
 import { Button } from "@/components/ui";
 
-const FAILED = "We could not sign you in with that passkey. Use the email link below.";
-const CANCELLED = "Passkey sign-in was cancelled. You can still use the email link below.";
+const FAILED = "We couldn't sign you in with that passkey. Try again, or use the email link below.";
+const CANCELLED = "Passkey sign-in was cancelled. Try again, or use the email link below.";
 const RATE_LIMITED = "Too many attempts. Wait a few minutes, or use the email link below.";
 
+function PasskeyIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M3.5 19.5c.6-3.2 2.8-5 5.5-5 1.2 0 2.3.3 3.2 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="17" cy="14" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M17 16.2V21m0-2h1.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function PasskeySignIn() {
-  const supported = usePasskeySupport();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!supported) return null;
-
   async function signIn() {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -53,24 +64,28 @@ export function PasskeySignIn() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Button type="button" variant="primary" className="w-full" onClick={signIn} disabled={busy} aria-busy={busy || undefined}>
-          {busy ? "Waiting for your device…" : "Sign in with a passkey"}
-        </Button>
-        <p className="text-[13px] leading-5 text-ink-3">Use Face ID, a fingerprint or your device PIN. There is no code to type.</p>
-        {error ? (
-          <p role="alert" className="text-[13px] leading-5 text-danger">
-            {error}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="flex items-center gap-3 text-[12px] font-medium tracking-[0.08em] text-ink-3 uppercase" aria-hidden="true">
-        <span className="h-px flex-1 bg-line" />
-        or
-        <span className="h-px flex-1 bg-line" />
-      </div>
+    <div className="flex flex-col gap-2">
+      <Button
+        type="button"
+        variant="primary"
+        className={busy ? "w-full cursor-progress opacity-80" : "w-full"}
+        onClick={signIn}
+        aria-disabled={busy || undefined}
+        aria-busy={busy || undefined}
+        aria-describedby={error ? "passkey-error" : "passkey-hint"}
+      >
+        <PasskeyIcon />
+        {busy ? "Waiting for your device…" : "Sign in with a passkey"}
+      </Button>
+      {error ? (
+        <p id="passkey-error" role="alert" className="text-small font-medium text-danger">
+          {error}
+        </p>
+      ) : (
+        <p id="passkey-hint" className="text-small text-ink-3">
+          Face ID, a fingerprint or your device PIN. Nothing to type.
+        </p>
+      )}
     </div>
   );
 }

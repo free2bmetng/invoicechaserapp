@@ -1,24 +1,19 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
-import { PageHeader } from "@/components/ui";
 import { OnboardingProfileForm } from "@/components/settings/onboarding-profile-form";
-import { OnboardingProgress } from "@/components/settings/onboarding-steps";
-import { SettingsCard } from "@/components/settings/form-kit";
+import { OnboardingStepHeader, STEP_COPY } from "@/components/settings/onboarding-steps";
+import { profileValuesFrom } from "@/components/settings/profile-values";
 import { CardsSkeleton } from "@/components/settings/skeleton";
 import { getSettingsView, onboardingSteps } from "@/lib/queries/settings";
 import { requireUserId } from "@/lib/session";
 
+export const metadata: Metadata = { title: "Sender details · Set up" };
+
 export default function OnboardingProfilePage() {
   return (
-    <>
-      <PageHeader
-        eyebrow="Setup · Step 1 of 4"
-        title="Sender details and settings"
-        description="Reminders are built from these details. You can change any of them later in Settings."
-      />
-      <Suspense fallback={<CardsSkeleton cards={2} />}>
-        <ProfileStep />
-      </Suspense>
-    </>
+    <Suspense fallback={<CardsSkeleton cards={2} />}>
+      <ProfileStep />
+    </Suspense>
   );
 }
 
@@ -26,32 +21,15 @@ export default function OnboardingProfilePage() {
 async function ProfileStep() {
   const userId = await requireUserId();
   const view = await getSettingsView(userId);
-  const s = view.settings;
-
   return (
-    <div className="mt-8 flex flex-col gap-6">
-      <OnboardingProgress steps={onboardingSteps(view)} current="profile" />
-      <div>
-        <SettingsCard
-          id="profile-details"
-          title="Your details"
-          description={<p>Your sender details come first. The send window, limit and digest have sensible defaults.</p>}
-        >
-          <OnboardingProfileForm
-            initial={{
-              senderName: s.senderName,
-              businessName: s.businessName,
-              postalAddress: s.postalAddress,
-              timezone: s.timezone,
-              windowStart: String(s.sendWindowStart),
-              windowEnd: String(s.sendWindowEnd),
-              dailyCap: String(s.dailyCap),
-              digestEnabled: s.digestEnabled,
-              digestHour: String(s.digestHour),
-            }}
-          />
-        </SettingsCard>
-      </div>
+    <div className="flex flex-col gap-6">
+      <OnboardingStepHeader
+        step="profile"
+        steps={onboardingSteps(view)}
+        title={STEP_COPY.profile.title}
+        description="Every reminder ends with a footer built from these. You can change them later in Settings."
+      />
+      <OnboardingProfileForm initial={profileValuesFrom(view.settings)} domain={view.settings.sendingDomain} />
     </div>
   );
 }

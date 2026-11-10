@@ -2,24 +2,17 @@
 
 // Payments with Stripe. The usual way in is Connect with Stripe: the user approves access on Stripe's own
 // page, and no key is pasted here. The restricted-key form exists only for internal testing, and only when
-// the installation sets STRIPE_KEY_MODE=restricted. Either way the screen shows the account label only.
+// the installation turns it on. Either way the screen shows the account label only, never a key.
 import { useEffect, useState } from "react";
 import { updateStripeConnectionAction } from "@/app/actions/settings";
-import { Badge, Button, TextInput } from "@/components/ui";
-import {
-  Callout,
-  Field,
-  fieldProps,
-  readableDisabled,
-  SaveBar,
-  SettingsCard,
-  StatusLine,
-  useSettingsForm,
-} from "./form-kit";
+import { SummaryList } from "@/components/data";
+import { Badge, Button, buttonClass, TextInput } from "@/components/ui";
+import { Callout, Field, fieldProps, FormActions, Panel, StatusLine, useSettingsForm } from "./form-kit";
 
-// The same look as the primary button, for a plain link (the connect route is a full page navigation).
-const CONNECT_BUTTON =
-  "lift inline-flex h-10 items-center justify-center gap-2 rounded-[10px] bg-accent px-4 text-sm font-medium whitespace-nowrap text-accent-ink select-none shadow-[0_1px_0_rgb(255_255_255/0.18)_inset,0_1px_2px_rgb(0_0_0/0.12)] hover:bg-accent-hover";
+export interface StripeNotice {
+  tone: "ok" | "danger";
+  message: string;
+}
 
 export function StripeCard({
   connected,
@@ -27,15 +20,18 @@ export function StripeCard({
   appUrlConfigured,
   oauthConfigured,
   restrictedKeyMode,
+  notice,
 }: {
   connected: boolean;
   // The account label or Stripe account id. Never a token or a key.
   accountLabel: string | null;
   appUrlConfigured: boolean;
-  // True when STRIPE_CONNECT_CLIENT_ID is set, so the Connect with Stripe flow can start.
+  // True when this installation can start the Connect with Stripe flow.
   oauthConfigured: boolean;
-  // True only when STRIPE_KEY_MODE=restricted: the internal-testing key form is offered.
+  // True only when the internal-testing key form is turned on.
   restrictedKeyMode: boolean;
+  // The result of a Connect with Stripe return, if the page was opened from one.
+  notice: StripeNotice | null;
 }) {
   const form = useSettingsForm(updateStripeConnectionAction);
   const [stripeKey, setStripeKey] = useState("");
@@ -50,158 +46,135 @@ export function StripeCard({
     }
   }, [form.state]);
 
+  const showNotice = notice && form.state.status === "idle";
+
   return (
-    <SettingsCard
-      id="stripe"
-      level={3}
-      title="Payments with Stripe (optional)"
-      description={
-        <p>
-          With Stripe connected, each reminder includes a payment link, and the money goes straight to your Stripe account.
-          Invoice Chaser never holds, routes or pays out money. Without Stripe, you mark invoices paid by hand and reminders
-          carry no link.
-        </p>
-      }
-    >
-      {/* Above the branch, so a disconnect warning survives the switch to "not connected". */}
-      {form.state.status === "warning" ? (
-        <div className="mb-5">
-          <Callout tone="warn">{form.state.message}</Callout>
-        </div>
+    <div className="flex flex-col gap-6">
+      {showNotice ? (
+        <Callout tone={notice.tone === "ok" ? "neutral" : "danger"}>
+          <p role="status" className={notice.tone === "ok" ? "font-medium text-ok" : "font-medium text-danger"}>
+            {notice.message}
+          </p>
+        </Callout>
       ) : null}
+      {/* Above the panel, so a disconnect warning survives the switch to "not connected". */}
+      {form.state.status === "warning" ? <Callout tone="warn">{form.state.message}</Callout> : null}
 
-      {connected ? (
-        <div className="flex flex-col gap-5">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge tone="ok">Connected</Badge>
-            <span className="text-[14px] text-ink-2">
-              Account: <span className="font-medium text-ink">{accountLabel ?? "Stripe account"}</span>
-            </span>
-          </div>
+      <Panel
+        id="stripe"
+        title="Stripe"
+        description="With Stripe connected, each reminder carries a payment link and the money goes straight to your Stripe account. Invoice Chaser never holds money."
+        action={
+          connected && !confirming ? (
+            <Button type="button" size="sm" onClick={() => setConfirming(true)}>
+              Disconnect
+            </Button>
+          ) : null
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <SummaryList
+            items={[
+              {
+                label: "Status",
+                value: connected ? <Badge tone="ok">Connected</Badge> : <Badge>Not connected</Badge>,
+              },
+              connected
+                ? { label: "Account", value: accountLabel ?? "Stripe account" }
+                : { label: "Without Stripe", value: "You mark invoices paid by hand, and reminders carry no payment link." },
+            ]}
+          />
 
-          {form.state.status !== "warning" ? <StatusLine state={form.state} /> : null}
-
-          {confirming ? (
+          {connected && confirming ? (
             <div className="rounded-[var(--radius-md)] border border-danger/30 bg-danger-soft p-4">
-              <p className="text-[14px] leading-6 text-ink">
-                Disconnecting removes Stripe from Invoice Chaser. New reminders stop carrying a payment link. Invoice Chaser
-                also tries to delete the Stripe webhook endpoint. If Stripe refuses, you will be told how to delete it
-                yourself.
+              <p className="text-body text-ink">
+                New reminders will stop carrying a payment link. Invoice Chaser also deletes its Stripe webhook, or tells
+                you how to if Stripe refuses.
               </p>
-              <form ref={form.formRef} onSubmit={form.onSubmit} className="mt-4 flex flex-wrap gap-2">
+              <form ref={form.formRef} onSubmit={form.onSubmit} className="mt-3 flex flex-wrap gap-2">
                 <input type="hidden" name="intent" value="disconnect" />
-                <Button
-                  type="submit"
-                  variant="danger"
-                  disabled={form.pending}
-                  aria-busy={form.pending || undefined}
-                  className={readableDisabled}
-                >
-                  {form.pending ? "Disconnecting…" : "Yes, disconnect Stripe"}
+                <Button type="submit" variant="danger" disabled={form.pending} aria-busy={form.pending || undefined}>
+                  {form.pending ? "Disconnecting…" : "Disconnect Stripe"}
                 </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={form.pending}
-                  onClick={() => setConfirming(false)}
-                  className={readableDisabled}
-                >
+                <Button type="button" variant="ghost" disabled={form.pending} onClick={() => setConfirming(false)}>
                   Keep it connected
                 </Button>
               </form>
             </div>
-          ) : (
-            <div>
-              <Button type="button" variant="secondary" onClick={() => setConfirming(true)}>
-                Disconnect Stripe
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-4">
-            <p className="text-[14px] leading-6 text-ink-2">
-              You approve Invoice Chaser on Stripe&apos;s own page, and no key is pasted here.
-            </p>
-            {oauthConfigured ? (
-              <div>
-                <a href="/api/stripe/connect" className={CONNECT_BUTTON}>
-                  Connect with Stripe
-                </a>
-              </div>
-            ) : (
-              <>
-                <Callout tone="info">
-                  Stripe is not set up on this installation yet. Connecting needs the Stripe Connect client ID, which the
-                  person who runs Invoice Chaser adds as STRIPE_CONNECT_CLIENT_ID.
-                </Callout>
-                <div>
-                  <button type="button" disabled className={`${CONNECT_BUTTON} ${readableDisabled}`}>
-                    Connect with Stripe
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {restrictedKeyMode ? (
-            <form ref={form.formRef} onSubmit={form.onSubmit} noValidate className="flex flex-col gap-5 border-t border-line pt-6">
-              <input type="hidden" name="intent" value="connect" />
-              <div className="flex flex-col gap-2">
-                <Badge tone="warn">Internal testing only</Badge>
-                <p className="text-[14px] leading-6 text-ink-2">
-                  Paste a restricted key directly. This form is for internal testing on this installation, not for customers.
-                </p>
-              </div>
-              <Field
-                id="stripeKey"
-                label="Restricted API key"
-                hint={
-                  <>
-                    Starts with <span className="font-mono">rk_</span>. Create it in Stripe with permission to write Webhook
-                    Endpoints, and to read and write Payment Links and Prices. Secret keys (sk_) are not accepted. The key is
-                    encrypted when saved and never shown again.
-                  </>
-                }
-                error={errors.stripeKey}
-              >
-                <TextInput
-                  {...fieldProps("stripeKey", { hasHint: true, error: errors.stripeKey })}
-                  name="stripeKey"
-                  type="password"
-                  autoComplete="off"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  aria-required="true"
-                  className="font-mono"
-                  value={stripeKey}
-                  onChange={(e) => setStripeKey(e.target.value)}
-                />
-              </Field>
-
-              {!appUrlConfigured ? (
-                <Callout tone="warn">
-                  This installation has no APP_URL set, so Stripe cannot send payment events back yet. Ask the person who runs
-                  Invoice Chaser to set it.
-                </Callout>
-              ) : null}
-
-              <SaveBar
-                pending={form.pending}
-                state={form.state}
-                idleLabel="Connect with a restricted key"
-                pendingLabel="Checking the key with Stripe…"
-                disabled={!appUrlConfigured}
-                showStatus={form.state.status !== "warning"}
-              />
-            </form>
           ) : null}
 
-          {!restrictedKeyMode && form.state.status !== "warning" ? <StatusLine state={form.state} /> : null}
+          {!connected ? (
+            oauthConfigured ? (
+              <div className="flex flex-col items-start gap-2 border-t border-line pt-4">
+                <a href="/api/stripe/connect" className={buttonClass("primary")}>
+                  Connect with Stripe
+                </a>
+                <p className="text-small text-ink-3">You approve access on Stripe&apos;s own page. No key is pasted here.</p>
+              </div>
+            ) : (
+              <p className="border-t border-line pt-4 text-body text-ink-2">
+                Stripe isn&apos;t set up on this installation yet. Ask the person who runs Invoice Chaser to turn it on.
+              </p>
+            )
+          ) : null}
+
+          {/* The key form shows its own status while it is on screen. */}
+          {(form.state.status === "saved" || form.state.status === "error") && !(restrictedKeyMode && !connected) ? (
+            <StatusLine state={form.state} />
+          ) : null}
         </div>
-      )}
-    </SettingsCard>
+      </Panel>
+
+      {restrictedKeyMode && !connected ? (
+        <Panel
+          id="stripe-key"
+          title="Restricted key"
+          description="For internal testing on this installation only. Customers connect with Stripe instead."
+          action={<Badge tone="warn">Internal testing</Badge>}
+        >
+          <form ref={form.formRef} onSubmit={form.onSubmit} noValidate className="flex flex-col gap-4">
+            <input type="hidden" name="intent" value="connect" />
+            <Field
+              id="stripeKey"
+              label="Restricted API key"
+              hint={
+                <>
+                  Starts with <span className="font-mono">rk_</span>. Needs write access to Webhook Endpoints, and read and
+                  write access to Payment Links and Prices. Stored encrypted and never shown again.
+                </>
+              }
+              error={errors.stripeKey}
+            >
+              <TextInput
+                {...fieldProps("stripeKey", { hasHint: true, error: errors.stripeKey })}
+                name="stripeKey"
+                type="password"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-required="true"
+                className="font-mono"
+                value={stripeKey}
+                onChange={(e) => setStripeKey(e.target.value)}
+              />
+            </Field>
+            {!appUrlConfigured ? (
+              <Callout tone="warn">
+                This installation&apos;s web address isn&apos;t set, so Stripe can&apos;t send payment events back yet.
+              </Callout>
+            ) : null}
+            <FormActions
+              pending={form.pending}
+              state={form.state.status === "warning" ? { ...form.state, message: "" } : form.state}
+              idleLabel="Connect with this key"
+              pendingLabel="Checking the key with Stripe…"
+              disabled={!appUrlConfigured}
+              cancel={false}
+            />
+          </form>
+        </Panel>
+      ) : null}
+    </div>
   );
 }

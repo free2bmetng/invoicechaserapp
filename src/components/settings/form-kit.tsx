@@ -1,7 +1,8 @@
 "use client";
 
 // Building blocks for the settings and onboarding forms: one hook that submits a server action,
-// field wrappers that wire labels, hints and errors together, and the save bar with its status line.
+// field wrappers that wire labels, hints and errors together, the action row with its status line,
+// and a panel frame that matches EditableSection for sections that are not edit forms.
 import { startTransition, useActionState, useEffect, useRef, type FormEvent, type ReactNode } from "react";
 import { Button, cx } from "@/components/ui";
 import { IDLE_FORM_STATE, type FormState } from "./state";
@@ -32,20 +33,20 @@ export function useSettingsForm(action: FormAction) {
   return { state, pending, formRef, onSubmit };
 }
 
-// Attributes that tie an input to its hint and its error message. Pass hasHint when the Field has a hint.
+// Attributes that tie an input to its hint or its error. The error replaces the hint, so the
+// input is described by whichever one is on screen.
 export function fieldProps(id: string, options: { hasHint?: boolean; error?: string } = {}) {
-  const describedBy = [options.hasHint ? `${id}-hint` : null, options.error ? `${id}-error` : null]
-    .filter(Boolean)
-    .join(" ");
+  const describedBy = options.error ? `${id}-error` : options.hasHint ? `${id}-hint` : undefined;
   return {
     id,
     "aria-invalid": options.error ? ("true" as const) : undefined,
-    "aria-describedby": describedBy || undefined,
+    "aria-describedby": describedBy,
   };
 }
 
 // Every field here is required unless its label says otherwise, so no per-field marker is shown.
 // Inputs still carry aria-required, so assistive technology hears the requirement.
+// One line under the field: the error when there is one, otherwise the hint.
 export function Field({
   id,
   label,
@@ -61,119 +62,127 @@ export function Field({
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="text-[13.5px] font-medium text-ink">
+      <label htmlFor={id} className="text-small font-medium text-ink">
         {label}
       </label>
       {children}
-      {hint ? (
-        <p id={`${id}-hint`} className="text-[13px] leading-5 text-ink-3">
-          {hint}
-        </p>
-      ) : null}
       {error ? (
-        <p id={`${id}-error`} className="text-[13px] leading-5 font-medium text-danger">
+        <p id={`${id}-error`} className="text-small font-medium text-danger">
           {error}
+        </p>
+      ) : hint ? (
+        <p id={`${id}-hint`} className="text-small text-ink-3">
+          {hint}
         </p>
       ) : null}
     </div>
   );
 }
 
-// level is the heading the card's title uses. Cards in a settings section use 3 (under the section's 2).
-export function SettingsCard({
-  id,
+// The same frame and header as EditableSection, for sections that hold a list or a link rather
+// than an edit form (passkeys, Stripe, the data download). `action` sits top right, like Edit.
+export function Panel({
   title,
   description,
+  action,
+  tone = "neutral",
   children,
-  className,
-  level = 2,
+  id,
 }: {
-  id: string;
   title: string;
-  description: ReactNode;
-  children: ReactNode;
-  className?: string;
-  level?: 2 | 3;
+  description?: ReactNode;
+  action?: ReactNode;
+  tone?: "neutral" | "danger";
+  children?: ReactNode;
+  id?: string;
 }) {
-  const Heading = level === 3 ? "h3" : "h2";
+  const headingId = id ? `${id}-title` : undefined;
   return (
     <section
-      aria-labelledby={id}
-      className={cx("scroll-mt-28 rounded-[var(--radius-lg)] border border-line bg-surface p-5 shadow-card sm:p-7 lg:scroll-mt-8", className)}
+      id={id}
+      aria-labelledby={headingId}
+      className={cx(
+        "rounded-[var(--radius-lg)] border bg-surface shadow-card",
+        tone === "danger" ? "border-danger/45" : "border-line",
+      )}
     >
-      <Heading id={id} className="text-[17px] leading-7 font-semibold tracking-[-0.01em] text-ink">
-        {title}
-      </Heading>
-      <div className="mt-1.5 text-[14px] leading-6 text-ink-2">{description}</div>
-      <div className="mt-6">{children}</div>
+      <div className="flex items-start justify-between gap-4 px-4 pt-4 sm:px-6 sm:pt-5">
+        <div className="min-w-0">
+          <h2 id={headingId} className={cx("text-card-title", tone === "danger" ? "text-danger" : "text-ink")}>
+            {title}
+          </h2>
+          {description ? <div className="mt-0.5 text-small text-ink-3">{description}</div> : null}
+        </div>
+        {action ? <div className="-my-1.5 shrink-0">{action}</div> : null}
+      </div>
+      <div className={cx("px-4 pb-4 sm:px-6 sm:pb-5", children ? "pt-3" : "pt-0")}>{children}</div>
     </section>
   );
 }
 
-export function StatusLine({ state }: { state: FormState }) {
+export function StatusLine({ state, className }: { state: FormState; className?: string }) {
   const tone =
     state.status === "error" ? "text-danger" : state.status === "warning" ? "text-warn" : state.status === "saved" ? "text-ok" : "text-ink-2";
   return (
-    <p role="status" aria-live="polite" className={cx("min-w-0 text-[13.5px] leading-6 font-medium", tone)}>
+    <p role="status" aria-live="polite" className={cx("min-w-0 text-small font-medium empty:hidden", tone, className)}>
       {state.message}
     </p>
   );
 }
 
-// A disabled button that stays readable. The base button fades to 50% opacity, which left the disabled
-// "Finish setup" and "Connect Stripe" labels too pale to read. This keeps full contrast with a quiet surface.
-export const readableDisabled =
-  "disabled:opacity-100! disabled:border disabled:border-line disabled:bg-surface-2 disabled:text-ink-2 disabled:shadow-none";
-
-export function SaveBar({
+// Save (primary) and an optional Cancel that closes the EditableSection, with the status beside them.
+export function FormActions({
   pending,
   state,
   idleLabel,
   pendingLabel,
+  cancel = true,
   disabled = false,
   danger = false,
-  showStatus = true,
-  children,
 }: {
   pending: boolean;
   state: FormState;
   idleLabel: string;
   pendingLabel: string;
+  cancel?: boolean;
   disabled?: boolean;
   danger?: boolean;
-  showStatus?: boolean;
-  children?: ReactNode;
 }) {
   return (
-    <div className="mt-2 flex flex-col gap-3 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        {showStatus ? <StatusLine state={state} /> : null}
-        {children}
+    <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="submit"
+          variant={danger ? "danger" : "primary"}
+          disabled={pending || disabled}
+          aria-busy={pending || undefined}
+          className="max-sm:flex-1"
+        >
+          {pending ? pendingLabel : idleLabel}
+        </Button>
+        {cancel ? (
+          <Button type="button" variant="ghost" data-edit-cancel="" disabled={pending}>
+            Cancel
+          </Button>
+        ) : null}
       </div>
-      <Button
-        type="submit"
-        variant={danger ? "danger" : "primary"}
-        disabled={pending || disabled}
-        className={`w-full sm:w-auto ${readableDisabled}`}
-        aria-busy={pending || undefined}
-      >
-        {pending ? pendingLabel : idleLabel}
-      </Button>
+      <StatusLine state={state} />
     </div>
   );
 }
 
-export type CalloutTone = "warn" | "info" | "danger";
+export type CalloutTone = "warn" | "info" | "danger" | "neutral";
 
 const calloutTone: Record<CalloutTone, string> = {
   warn: "border-warn/30 bg-warn-soft",
   info: "border-info/25 bg-info-soft",
   danger: "border-danger/30 bg-danger-soft",
+  neutral: "border-line bg-surface-2",
 };
 
-export function Callout({ tone = "info", children }: { tone?: CalloutTone; children: ReactNode }) {
+export function Callout({ tone = "neutral", children, className }: { tone?: CalloutTone; children: ReactNode; className?: string }) {
   return (
-    <div className={cx("rounded-[var(--radius-md)] border px-4 py-3.5 text-[14px] leading-6 text-ink", calloutTone[tone])}>
+    <div className={cx("rounded-[var(--radius-md)] border px-4 py-3 text-body text-ink", calloutTone[tone], className)}>
       {children}
     </div>
   );

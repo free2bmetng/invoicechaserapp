@@ -1,10 +1,14 @@
 "use client";
 
-// Sign-in: the passkeys on the account. Each row has its own inline confirmation for removal. There is
-// no form-wide Save here, because nothing is edited: a passkey is added or removed on its own.
-import { useEffect, useState, type ReactNode } from "react";
+// Sign-in: the passkeys on the account, and the email link that always works. Each passkey row has its
+// own inline confirmation for removal. Nothing here is a form-wide edit, so there is no Save.
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { usePasskeySupport } from "@/components/passkey/add-passkey";
+import { AddPasskeyButton } from "@/components/passkey/add-passkey-button";
+import { SummaryList } from "@/components/data";
 import { Button } from "@/components/ui";
-import { readableDisabled, SettingsCard, StatusLine, useSettingsForm, type FormAction } from "./form-kit";
+import { Panel, StatusLine, useSettingsForm, type FormAction } from "./form-kit";
 
 export interface PasskeyRowView {
   id: string;
@@ -13,53 +17,62 @@ export interface PasskeyRowView {
   lastUsedLabel: string;
 }
 
-// True when this browser exposes the WebAuthn API that passkeys need. Read after mount only, so the
-// server render and the first browser render match.
-function browserSupportsPasskeys(): boolean {
-  return typeof window !== "undefined" && typeof window.PublicKeyCredential === "function";
+function KeyIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="8" cy="12" r="3.5" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M11.5 12H20m-3 0v3m-3-3v2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 export function SignInCard({
   passkeys,
   removeAction,
-  addSlot,
+  email,
 }: {
   passkeys: PasskeyRowView[];
   removeAction: FormAction;
-  // The add-a-passkey flow (the passkey feature's PasskeyOffer). Shown only in browsers that support passkeys.
-  addSlot?: ReactNode;
+  email: string;
 }) {
-  const [supported, setSupported] = useState(false);
-  useEffect(() => setSupported(browserSupportsPasskeys()), []);
+  const supported = usePasskeySupport();
+  const router = useRouter();
 
   return (
-    <SettingsCard
-      id="passkeys"
-      level={3}
-      title="Passkeys"
-      description={
-        <p>
-          Sign in with Face ID, a fingerprint or a device PIN. The email link is for new devices, and it still works if you
-          remove every passkey.
-        </p>
-      }
-    >
-      <div className="flex flex-col gap-5">
-        {passkeys.length === 0 ? (
-          <p className="text-[14px] leading-6 text-ink-2">
-            No passkeys on this account yet. Until you add one, sign in with the email link.
-          </p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-line rounded-[var(--radius-md)] border border-line">
-            {passkeys.map((passkey) => (
-              <PasskeyRow key={passkey.id} passkey={passkey} removeAction={removeAction} />
-            ))}
-          </ul>
-        )}
+    <div className="flex flex-col gap-6">
+      <Panel
+        id="passkeys"
+        title="Passkeys"
+        description="Sign in with Face ID, a fingerprint or your device PIN. No code to type."
+      >
+        <div className="flex flex-col gap-4">
+          {passkeys.length === 0 ? (
+            <p className="text-body text-ink-2">No passkeys yet. Until you add one, you sign in with the email link.</p>
+          ) : (
+            <ul className="-mx-4 divide-y divide-line border-y border-line sm:-mx-6">
+              {passkeys.map((passkey) => (
+                <PasskeyRow key={passkey.id} passkey={passkey} removeAction={removeAction} />
+              ))}
+            </ul>
+          )}
+          {supported ? (
+            <AddPasskeyButton variant={passkeys.length === 0 ? "primary" : "secondary"} onAdded={() => router.refresh()} />
+          ) : (
+            <p className="text-small text-ink-3">This browser can&apos;t create passkeys. Open Invoice Chaser on your phone or laptop to add one.</p>
+          )}
+        </div>
+      </Panel>
 
-        {supported && addSlot ? <div className="border-t border-line pt-5">{addSlot}</div> : null}
-      </div>
-    </SettingsCard>
+      <Panel id="email-link" title="Email link" description="The way in on a new device, or if you lose the one with your passkey.">
+        <SummaryList
+          items={[
+            { label: "Status", value: "Always on" },
+            { label: "Sent to", value: email },
+            { label: "Each link", value: "Works once and expires after 15 minutes" },
+          ]}
+        />
+      </Panel>
+    </div>
   );
 }
 
@@ -68,49 +81,37 @@ function PasskeyRow({ passkey, removeAction }: { passkey: PasskeyRowView; remove
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <li className="px-4 py-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-medium text-ink">{passkey.label}</p>
-          <p className="text-[13px] text-ink-3">{passkey.lastUsedLabel}</p>
+    <li className="px-4 py-3 sm:px-6">
+      <div className="flex min-h-11 items-center gap-3">
+        <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-line bg-surface-2 text-ink-2">
+          <KeyIcon />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-body font-medium text-ink">{passkey.label}</p>
+          <p className="text-small text-ink-3">{passkey.lastUsedLabel}</p>
         </div>
         {confirming ? null : (
-          <Button type="button" size="sm" variant="secondary" onClick={() => setConfirming(true)}>
-            Remove
+          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+            Remove<span className="sr-only"> {passkey.label}</span>
           </Button>
         )}
       </div>
 
       {confirming ? (
-        <div className="mt-4 rounded-[var(--radius-md)] border border-danger/30 bg-danger-soft p-4">
-          <p className="text-[14px] leading-6 text-ink">
-            Remove “{passkey.label}”? You will not be able to sign in with it anymore. Removing your last passkey is fine:
-            the email link still signs you in.
+        <div className="mt-3 rounded-[var(--radius-md)] border border-danger/30 bg-danger-soft p-4">
+          <p className="text-body text-ink">
+            Remove “{passkey.label}”? You won&apos;t be able to sign in with it. The email link still works.
           </p>
-          <form ref={form.formRef} onSubmit={form.onSubmit} className="mt-4 flex flex-wrap items-center gap-2">
+          <form ref={form.formRef} onSubmit={form.onSubmit} className="mt-3 flex flex-wrap items-center gap-2">
             <input type="hidden" name="passkeyId" value={passkey.id} />
-            <Button
-              type="submit"
-              variant="danger"
-              disabled={form.pending}
-              aria-busy={form.pending || undefined}
-              className={readableDisabled}
-            >
-              {form.pending ? "Removing…" : "Yes, remove it"}
+            <Button type="submit" variant="danger" disabled={form.pending} aria-busy={form.pending || undefined}>
+              {form.pending ? "Removing…" : "Remove passkey"}
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={form.pending}
-              onClick={() => setConfirming(false)}
-              className={readableDisabled}
-            >
+            <Button type="button" variant="ghost" disabled={form.pending} onClick={() => setConfirming(false)}>
               Keep it
             </Button>
-          </form>
-          <div className="mt-3">
             <StatusLine state={form.state} />
-          </div>
+          </form>
         </div>
       ) : null}
     </li>

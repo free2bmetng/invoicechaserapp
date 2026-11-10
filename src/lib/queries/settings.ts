@@ -271,6 +271,20 @@ export function onboardingSteps(view: Pick<SettingsView, "settings" | "invoiceCo
   ];
 }
 
+// What the setup checklist highlights as the one thing to do next: the first unfinished required step,
+// in order; then Finish once every required step is done; nothing once setup is finished. The optional
+// invoices step is never pushed: it stays one tap away in the list.
+export type OnboardingNext =
+  | { kind: "step"; key: OnboardingStepKey }
+  | { kind: "finish" }
+  | { kind: "done" };
+
+export function nextOnboardingStep(steps: OnboardingStep[], onboardingDone: boolean): OnboardingNext {
+  if (onboardingDone) return { kind: "done" };
+  const next = steps.find((step) => step.required && !step.done);
+  return next ? { kind: "step", key: next.key } : { kind: "finish" };
+}
+
 export function missingRequiredSteps(steps: OnboardingStep[]): string[] {
   return steps.filter((step) => step.required && !step.done).map((step) => step.title);
 }
