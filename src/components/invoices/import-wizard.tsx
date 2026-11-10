@@ -99,7 +99,7 @@ const COLUMN_RULES: Record<string, { rule: string; example: string }> = {
   client_name: { rule: "The client's name", example: "Acme Ltd" },
   client_email: { rule: "Matches a client, ignoring case. A new client is created when none matches.", example: "accounts@acme.test" },
   invoice_number: { rule: "Unique for the client", example: "INV-1001" },
-  amount: { rule: "A point for decimals, no thousands separator", example: "1250.00" },
+  amount: { rule: "A point for decimals. Commas between thousands are fine.", example: "1,250.00" },
   currency: { rule: "A three-letter currency code", example: "USD" },
   issue_date: { rule: "YYYY-MM-DD", example: "2026-10-01" },
   due_date: { rule: "YYYY-MM-DD, on or after the issue date", example: "2026-10-15" },

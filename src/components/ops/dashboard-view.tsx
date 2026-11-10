@@ -24,7 +24,7 @@ function agingBuckets(t: CurrencyTotals): AgingBucket[] {
   const c = t.counts;
   return [
     { label: `Not yet due (${c.notDue})`, amountMinor: t.notDueMinor, tone: "neutral" },
-    { label: `1–30 days (${c.days1to30})`, amountMinor: t.overdueByAge.days1to30, tone: "warn" },
+    { label: `1–30 days (${c.days1to30})`, amountMinor: t.overdueByAge.days1to30, tone: "caution" },
     { label: `31–60 days (${c.days31to60})`, amountMinor: t.overdueByAge.days31to60, tone: "warn" },
     { label: `61+ days (${c.days61plus})`, amountMinor: t.overdueByAge.days61plus, tone: "danger" },
   ];

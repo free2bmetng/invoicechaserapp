@@ -72,6 +72,15 @@ function shown(value: string): string {
   return chars.length > 40 ? `${chars.slice(0, 40).join("")}...` : value;
 }
 
+// Accounting exports often write "1,250.00". A comma is accepted only as a strict
+// thousands separator (groups of exactly three digits, "." for decimals), so a
+// European decimal comma such as "1,25" is still rejected rather than misread.
+const GROUPED_AMOUNT = /^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
+
+function withoutGrouping(raw: string): string {
+  return GROUPED_AMOUNT.test(raw) ? raw.replaceAll(",", "") : raw;
+}
+
 function checkDate(raw: string, column: string, reasons: string[]): string | null {
   if (raw === "") {
     reasons.push(`${column} is required.`);
@@ -194,9 +203,11 @@ export function planCsvImport(text: string, existingKeys: Set<string>, today: st
     let amountMinor = 0;
     if (amountRaw === "") {
       reasons.push("amount is required.");
+    } else if (amountRaw.includes(",") && !GROUPED_AMOUNT.test(amountRaw)) {
+      reasons.push(`amount "${shown(amountRaw)}" is unclear. Use "." for decimals, such as 1250.00 or 1,250.00.`);
     } else if (currencyOk) {
       try {
-        amountMinor = parseMoneyToMinor(amountRaw, currency);
+        amountMinor = parseMoneyToMinor(withoutGrouping(amountRaw), currency);
         if (amountMinor <= 0) reasons.push("amount must be greater than zero.");
       } catch (err) {
         reasons.push(errorMessage(err));

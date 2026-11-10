@@ -191,9 +191,19 @@ describe("planCsvImport: file-level errors import nothing", () => {
 });
 
 describe("planCsvImport: amounts and currencies", () => {
-  it("rejects thousands separators", () => {
-    expect(reasonsOf('Acme,a@b.test,INV-1,"1,234.50",USD,2026-11-01,2026-11-15')).toEqual([
-      expect.stringMatching(/no thousands separators/),
+  it.each([
+    ["1,234.50", 123450],
+    ["12,345", 1234500],
+    ["1,234,567.89", 123456789],
+  ])("accepts strict thousands separators: %s", (amount, minor) => {
+    const plan = planCsvImport(csvText(`Acme,a@b.test,INV-1,"${amount}",USD,2026-11-01,2026-11-15`), NO_KEYS, TODAY);
+    expect(plan.rejected).toEqual([]);
+    expect(plan.valid[0].amountMinor).toBe(minor);
+  });
+
+  it.each(["1,25", "12,50,000", "1,2345.00", ",123", "1,234,5"])("rejects a comma that is not a thousands separator: %s", (amount) => {
+    expect(reasonsOf(`Acme,a@b.test,INV-1,"${amount}",USD,2026-11-01,2026-11-15`)).toEqual([
+      `amount "${amount}" is unclear. Use "." for decimals, such as 1250.00 or 1,250.00.`,
     ]);
   });
 

@@ -272,7 +272,11 @@ export function StatTile({
 
 /* ───────────────────────── AgingBar ───────────────────────── */
 
-export type AgingBucket = { label: string; amountMinor: number; tone: Tone };
+// "caution" is a lighter amber, so the ramp reads not due → early → late → very late.
+export type AgingTone = Tone | "caution";
+export type AgingBucket = { label: string; amountMinor: number; tone: AgingTone };
+
+const agingFill: Record<AgingTone, string> = { ...fillClass, caution: "bg-warn-fill/45" };
 
 // Stacked bar + legend for one currency. The legend carries the numbers (the
 // bar is decorative for assistive tech). Zero buckets stay in the legend only.
@@ -287,7 +291,7 @@ export function AgingBar({ buckets, currency }: { buckets: AgingBucket[]; curren
               .map((b, i) => (
                 <span
                   key={`${b.label}-${i}`}
-                  className={cx("h-full min-w-[4px] basis-0 first:rounded-l-full last:rounded-r-full", fillClass[b.tone])}
+                  className={cx("h-full min-w-[4px] basis-0 first:rounded-l-full last:rounded-r-full", agingFill[b.tone])}
                   style={{ flexGrow: b.amountMinor }}
                 />
               ))
@@ -297,7 +301,7 @@ export function AgingBar({ buckets, currency }: { buckets: AgingBucket[]; curren
         {buckets.map((b, i) => (
           <div key={`${b.label}-${i}`} className="min-w-0">
             <dt className="flex items-center gap-2 text-small text-ink-2">
-              <span aria-hidden="true" className={cx("size-2 shrink-0 rounded-[3px]", fillClass[b.tone])} />
+              <span aria-hidden="true" className={cx("size-2 shrink-0 rounded-[3px]", agingFill[b.tone])} />
               <span className="truncate">{b.label}</span>
             </dt>
             <dd className={cx("mt-0.5 pl-4 text-body font-medium", b.amountMinor > 0 ? "text-ink" : "text-ink-3")}>
